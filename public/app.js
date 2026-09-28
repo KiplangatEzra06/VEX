@@ -2,6 +2,8 @@ const chatMessages = document.getElementById('chatMessages');
 const messageInput = document.getElementById('messageInput');
 const chatForm = document.getElementById('chatForm');
 const sendButton = document.getElementById('sendButton');
+const stopButton = document.getElementById('stopButton');
+const composerStatus = document.getElementById('composerStatus');
 const resetButton = document.getElementById('resetButton');
 const typingIndicator = document.getElementById('typingIndicator');
 const jumpButton = document.getElementById('jumpToLatest');
@@ -12,28 +14,44 @@ const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const recentList = document.getElementById('recentList');
 const voiceButton = document.getElementById('voiceButton');
-
-const TAGLINES = [
-    'Personal AI, always on.',
-    'Ready when you are.',
-    'Online and listening.',
-    'At your service.',
-    'Dry wit, useful answers.'
-];
+const drawerScrim = document.getElementById('drawerScrim');
+const openNavDrawerButton = document.getElementById('openNavDrawer');
+const openRecentDrawerButton = document.getElementById('openRecentDrawer');
 
 const STORAGE_KEY = 'vex-conversations';
 let activeHistory = [];
 let activeConversationId = null;
 let isRequestPending = false;
+let requestController = null;
+let modalReturnFocus = null;
+let drawerReturnFocus = null;
 let voiceState = {
     supported: 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
+    speechSupported: 'speechSynthesis' in window,
     recognition: null,
     listening: false,
     processing: false,
+    speaking: false,
+    processingTimer: null,
+    lastTranscript: '',
+    speakNextResponse: false,
     error: null,
 };
 
-function getBubbleText(parts) {
+function getBubbleText(entry) {
+    if (typeof entry === 'string') {
+        return entry.trim();
+    }
+
+    if (typeof entry?.content === 'string') {
+        return entry.content.trim();
+    }
+
+    if (typeof entry?.text === 'string') {
+        return entry.text.trim();
+    }
+
+    const parts = Array.isArray(entry) ? entry : entry?.parts;
     if (!Array.isArray(parts)) {
         return '';
     }
@@ -86,8 +104,7 @@ function setRandomTagline() {
         return;
     }
 
-    const next = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
-    tagline.textContent = next;
+    tagline.textContent = 'VEX';
 }
 
 function setEmptyStateVisible(visible) {
@@ -107,6 +124,12 @@ function autoResizeTextarea() {
     messageInput.style.height = `${nextHeight}px`;
 }
 
+function updateSendButtonState() {
+    if (sendButton) {
+        sendButton.disabled = isRequestPending || !messageInput?.value.trim();
+    }
+}
+
 function isNearBottom() {
     if (!chatMessages) {
         return true;
@@ -121,7 +144,8 @@ function scrollToBottom() {
         return;
     }
 
-    chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: 'smooth' });
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior });
 }
 
 function updateJumpButtonState() {
@@ -147,6 +171,10 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
     const group = document.createElement('div');
     group.className = 'message-group';
 
+    const author = document.createElement('span');
+    author.className = 'message-author';
+    author.textContent = role === 'user' ? 'You' : 'VEX';
+
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
     bubble.textContent = text;
@@ -155,6 +183,7 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
     meta.className = 'message-meta';
     meta.textContent = formatTime(timestamp);
 
+    group.appendChild(author);
     group.appendChild(bubble);
     group.appendChild(meta);
     row.appendChild(group);
@@ -185,7 +214,7 @@ function renderHistory(history) {
 
     history.forEach((entry) => {
         const role = entry?.role === 'user' ? 'user' : 'vex';
-        const text = getBubbleText(entry?.parts);
+        const text = getBubbleText(entry);
         const timestamp = getEntryTimestamp(entry).toISOString();
 
         if (!text) {
@@ -216,11 +245,19 @@ function setTypingState(isTyping) {
         typingIndicator.classList.toggle('hidden', !isTyping);
     }
     if (sendButton) {
-        sendButton.disabled = isTyping;
+        sendButton.classList.toggle('hidden', isTyping);
     }
-    if (messageInput) {
-        messageInput.disabled = isTyping;
+    if (stopButton) {
+        stopButton.classList.toggle('hidden', !isTyping);
     }
+    if (chatForm) {
+        chatForm.setAttribute('aria-busy', String(isTyping));
+    }
+    if (composerStatus) {
+        composerStatus.textContent = isTyping ? 'VEX is thinking...' : 'VEX can make mistakes. Check important details.';
+    }
+    updateSendButtonState();
+    updateVoiceButtonState();
 }
 
 function createConversationId() {
@@ -342,34 +379,63 @@ function buildRecentList() {
 
     const conversations = sortConversations(activeHistory);
     if (!conversations.length) {
-        recentList.innerHTML = '<li><span class="chat-dot">◔</span><span>No recent chats yet</span><time>now</time></li>';
+        recentList.replaceChildren();
+        const emptyItem = document.createElement('li');
+        emptyItem.className = 'recent-empty';
+        emptyItem.textContent = 'No recent chats yet';
+        recentList.appendChild(emptyItem);
         return;
     }
 
-    recentList.innerHTML = conversations.slice(0, 5).map((conversation) => {
-        const title = conversation.title || 'Untitled conversation';
+    recentList.replaceChildren();
+    conversations.slice(0, 8).forEach((conversation) => {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        const copy = document.createElement('span');
+        const title = document.createElement('span');
+        const preview = document.createElement('span');
         const lastUpdated = new Date(conversation.updatedAt || conversation.createdAt || Date.now());
         const when = lastUpdated.toLocaleDateString([], { month: 'short', day: 'numeric' });
-        return `<li data-conversation-id="${conversation.id}"><span class="chat-dot">◔</span><span>${title}</span><time>${when}</time></li>`;
-    }).join('');
+        const lastMessage = conversation.messages?.at(-1)?.content || 'No messages yet';
 
-    recentList.querySelectorAll('li').forEach((item) => {
-        item.addEventListener('click', () => {
-            const targetId = item.dataset.conversationId;
-            if (!targetId) {
-                return;
-            }
+        button.type = 'button';
+        button.className = 'recent-entry';
+        button.dataset.conversationId = conversation.id;
+        button.classList.toggle('active', conversation.id === activeConversationId);
+        button.setAttribute('aria-current', conversation.id === activeConversationId ? 'page' : 'false');
+        title.className = 'recent-title';
+        title.textContent = conversation.title || 'Untitled conversation';
+        preview.className = 'recent-preview';
+        preview.textContent = String(lastMessage).replace(/\s+/g, ' ').trim();
+        copy.className = 'recent-copy';
+        copy.append(title, preview);
 
-            const nextConversation = activeHistory.find((conversation) => conversation.id === targetId);
-            if (!nextConversation) {
-                return;
-            }
+        const time = document.createElement('time');
+        time.dateTime = lastUpdated.toISOString();
+        time.textContent = when;
+        const marker = document.createElement('span');
+        marker.className = 'chat-dot';
+        marker.setAttribute('aria-hidden', 'true');
+        marker.textContent = '◔';
 
-            activeConversationId = nextConversation.id;
-            renderHistory(nextConversation.messages || []);
-            setEmptyStateVisible(!((nextConversation.messages || []).length > 0));
-        });
+        button.append(marker, copy, time);
+        button.addEventListener('click', () => selectConversation(conversation.id));
+        item.appendChild(button);
+        recentList.appendChild(item);
     });
+}
+
+function selectConversation(conversationId) {
+    const conversation = activeHistory.find((entry) => entry.id === conversationId);
+    if (!conversation) {
+        return;
+    }
+
+    activeConversationId = conversation.id;
+    renderHistory(conversation.messages || []);
+    setEmptyStateVisible(!conversation.messages?.length);
+    buildRecentList();
+    closeDrawers();
 }
 
 function openModal(title, content) {
@@ -377,10 +443,16 @@ function openModal(title, content) {
         return;
     }
 
+    modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
     modalBody.innerHTML = content;
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(() => {
+        if (!modal.classList.contains('hidden')) {
+            modal.querySelector('input, button:not(:disabled)')?.focus();
+        }
+    });
 }
 
 function closeModal() {
@@ -391,9 +463,20 @@ function closeModal() {
     modal.classList.add('hidden');
     modal.setAttribute('aria-hidden', 'true');
 
-    if (messageInput) {
+    let focusTarget = modalReturnFocus;
+    if (focusTarget instanceof HTMLElement) {
+        const sourceDrawer = focusTarget.closest('.sidebar, .right-rail');
+        if (sourceDrawer && getComputedStyle(sourceDrawer).display === 'none') {
+            focusTarget = sourceDrawer.id === 'leftDrawer' ? openNavDrawerButton : openRecentDrawerButton;
+        }
+    }
+
+    if (focusTarget instanceof HTMLElement && focusTarget.isConnected) {
+        focusTarget.focus();
+    } else if (messageInput) {
         messageInput.focus();
     }
+    modalReturnFocus = null;
 }
 
 function openHistorySearch() {
@@ -435,8 +518,7 @@ function openHistorySearch() {
 
                 const nextConversation = activeHistory.find((conversation) => conversation.id === targetId);
                 if (nextConversation) {
-                    activeConversationId = targetId;
-                    renderHistory(nextConversation.messages || []);
+                    selectConversation(targetId);
                     closeModal();
                 }
             });
@@ -511,6 +593,34 @@ function persistConversationSet() {
     writeConversationsToStorage(activeHistory);
 }
 
+function openDrawer(panelId, trigger) {
+    const panel = document.getElementById(panelId);
+    if (!panel || !drawerScrim) {
+        return;
+    }
+
+    document.querySelectorAll('.sidebar, .right-rail').forEach((drawer) => drawer.classList.remove('is-open'));
+    drawerReturnFocus = trigger;
+    panel.classList.add('is-open');
+    document.querySelector('.app-shell')?.classList.add('drawer-open');
+    drawerScrim.classList.remove('hidden');
+    openNavDrawerButton?.setAttribute('aria-expanded', String(trigger === openNavDrawerButton));
+    openRecentDrawerButton?.setAttribute('aria-expanded', String(trigger === openRecentDrawerButton));
+    panel.querySelector('button')?.focus();
+}
+
+function closeDrawers(restoreFocus = true) {
+    document.querySelectorAll('.sidebar, .right-rail').forEach((drawer) => drawer.classList.remove('is-open'));
+    document.querySelector('.app-shell')?.classList.remove('drawer-open');
+    drawerScrim?.classList.add('hidden');
+    openNavDrawerButton?.setAttribute('aria-expanded', 'false');
+    openRecentDrawerButton?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && (!modal || modal.classList.contains('hidden')) && drawerReturnFocus instanceof HTMLElement && drawerReturnFocus.isConnected) {
+        drawerReturnFocus.focus();
+    }
+    drawerReturnFocus = null;
+}
+
 function ensureConversationTitle(conversation, messageText) {
     if (!conversation) {
         return;
@@ -563,6 +673,11 @@ async function sendMessage(messageText) {
         return;
     }
 
+    const shouldSpeakResponse = voiceState.speechSupported
+        && voiceState.speakNextResponse
+        && messageText === voiceState.lastTranscript;
+    voiceState.speakNextResponse = false;
+
     ensureActiveConversation();
     const activeConversation = getActiveConversation();
     const now = new Date().toISOString();
@@ -580,6 +695,8 @@ async function sendMessage(messageText) {
     }
 
     isRequestPending = true;
+    let wasStopped = false;
+    requestController = new AbortController();
     setTypingState(true);
 
     addMessage('user', messageText, now);
@@ -596,6 +713,7 @@ async function sendMessage(messageText) {
                 message: messageText,
                 conversationId: activeConversationId,
             }),
+            signal: requestController.signal,
         });
 
         const payload = await response.json();
@@ -606,6 +724,9 @@ async function sendMessage(messageText) {
 
         const responseTimestamp = new Date().toISOString();
         addMessage('vex', payload.reply, responseTimestamp);
+        if (shouldSpeakResponse) {
+            speakResponse(payload.reply);
+        }
 
         if (payload.conversationId) {
             activeConversationId = payload.conversationId;
@@ -626,15 +747,31 @@ async function sendMessage(messageText) {
 
         buildRecentList();
     } catch (error) {
-        addMessage('vex', error.message || 'Something went wrong.', new Date().toISOString());
+        if (error.name === 'AbortError') {
+            wasStopped = true;
+        } else {
+            addMessage('vex', error.message || 'Something went wrong.', new Date().toISOString());
+        }
     } finally {
         isRequestPending = false;
+        requestController = null;
         setTypingState(false);
-        messageInput.focus();
+        if (wasStopped && composerStatus) {
+            composerStatus.textContent = 'Generation stopped.';
+        }
+        if (!document.querySelector('.app-modal:not(.hidden)')) {
+            messageInput.focus();
+        }
         updateJumpButtonState();
         if (isNearBottom()) {
             scrollToBottom();
         }
+    }
+}
+
+function stopGeneration() {
+    if (requestController && isRequestPending) {
+        requestController.abort();
     }
 }
 
@@ -709,6 +846,8 @@ function bindActionButtons() {
 
             if (actions[action]) {
                 actions[action]();
+                closeDrawers(false);
+                messageInput?.focus();
             }
         });
     });
@@ -730,6 +869,13 @@ function bindActionButtons() {
                 return;
             }
 
+            if (voiceState.speaking) {
+                window.speechSynthesis.cancel();
+                voiceState.speaking = false;
+                updateVoiceButtonState();
+                return;
+            }
+
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             const recognition = new SpeechRecognition();
 
@@ -746,13 +892,24 @@ function bindActionButtons() {
 
             recognition.onresult = (event) => {
                 const transcript = event.results[0][0].transcript;
+                voiceState.lastTranscript = transcript;
+                voiceState.speakNextResponse = true;
+                voiceState.processing = true;
+                clearTimeout(voiceState.processingTimer);
+                voiceState.processingTimer = setTimeout(() => {
+                    voiceState.processing = false;
+                    updateVoiceButtonState();
+                }, 650);
+                updateVoiceButtonState();
                 if (messageInput) {
                     messageInput.value = transcript;
                     autoResizeTextarea();
+                    updateSendButtonState();
                 }
             };
 
             recognition.onerror = (event) => {
+                clearTimeout(voiceState.processingTimer);
                 voiceState.listening = false;
                 voiceState.processing = false;
                 voiceState.error = event.error || 'Voice input failed.';
@@ -762,8 +919,9 @@ function bindActionButtons() {
 
             recognition.onend = () => {
                 voiceState.listening = false;
-                voiceState.processing = false;
-                updateVoiceButtonState();
+                if (!voiceState.processing) {
+                    updateVoiceButtonState();
+                }
             };
 
             voiceState.recognition = recognition;
@@ -803,12 +961,6 @@ function bindActionButtons() {
     const profileButton = document.getElementById('profileButton');
     if (profileButton) {
         profileButton.addEventListener('click', openProfileMenu);
-        profileButton.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                openProfileMenu();
-            }
-        });
     }
 
     const viewAllRecentChats = document.getElementById('viewAllRecentChats');
@@ -839,6 +991,10 @@ function bindActionButtons() {
         closeModalButton.addEventListener('click', closeModal);
     }
 
+    openNavDrawerButton?.addEventListener('click', () => openDrawer('leftDrawer', openNavDrawerButton));
+    openRecentDrawerButton?.addEventListener('click', () => openDrawer('rightDrawer', openRecentDrawerButton));
+    drawerScrim?.addEventListener('click', closeDrawers);
+
     if (filePicker) {
         filePicker.addEventListener('change', (event) => {
             const [file] = event.target.files || [];
@@ -858,14 +1014,51 @@ function updateVoiceButtonState() {
         return;
     }
 
-    const state = voiceState.error ? 'error' : voiceState.processing ? 'processing' : voiceState.listening ? 'listening' : 'idle';
+    const state = voiceState.error ? 'error' : voiceState.speaking ? 'speaking' : voiceState.processing ? 'processing' : voiceState.listening ? 'listening' : 'idle';
     voiceButton.dataset.state = state;
-    voiceButton.disabled = isRequestPending;
-    voiceButton.setAttribute('aria-label', state === 'listening' ? 'Stop voice input' : state === 'processing' ? 'Processing voice input' : state === 'error' ? 'Voice input unavailable' : 'Voice input');
+    voiceButton.disabled = isRequestPending && !voiceState.speaking;
+    voiceButton.setAttribute('aria-label', state === 'listening' ? 'Stop voice input' : state === 'processing' ? 'Processing voice input' : state === 'speaking' ? 'Stop speaking' : state === 'error' ? 'Voice input unavailable' : 'Start voice input');
+    voiceButton.setAttribute('aria-pressed', String(state === 'listening' || state === 'speaking'));
+    if (composerStatus && (state === 'speaking' || !isRequestPending)) {
+        const statusMessages = {
+            idle: 'VEX can make mistakes. Check important details.',
+            listening: 'Listening. Speak when you are ready.',
+            processing: 'Processing your voice input...',
+            speaking: 'VEX is speaking. Select the voice button to stop.',
+            error: 'Voice input is unavailable. Continue typing.',
+        };
+        composerStatus.textContent = statusMessages[state];
+    }
     const icon = voiceButton.querySelector('.voice-icon');
     if (icon) {
-        icon.textContent = state === 'listening' ? '◉' : state === 'processing' ? '◌' : state === 'error' ? '⚠' : '◔';
+        icon.textContent = state === 'listening' ? '◉' : state === 'processing' ? '◌' : state === 'speaking' ? '■' : state === 'error' ? '!' : '◔';
     }
+}
+
+function speakResponse(text) {
+    if (!voiceState.speechSupported || !text) {
+        return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.onstart = () => {
+        voiceState.speaking = true;
+        voiceState.error = null;
+        updateVoiceButtonState();
+    };
+    utterance.onend = () => {
+        voiceState.speaking = false;
+        updateVoiceButtonState();
+    };
+    utterance.onerror = () => {
+        voiceState.speaking = false;
+        voiceState.error = null;
+        updateVoiceButtonState();
+    };
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
 }
 
 if (chatForm && messageInput) {
@@ -878,7 +1071,14 @@ if (chatForm && messageInput) {
         }
     });
 
-    messageInput.addEventListener('input', autoResizeTextarea);
+    messageInput.addEventListener('input', () => {
+        autoResizeTextarea();
+        updateSendButtonState();
+    });
+}
+
+if (stopButton) {
+    stopButton.addEventListener('click', stopGeneration);
 }
 
 if (resetButton) {
@@ -894,6 +1094,50 @@ if (jumpButton) {
         scrollToBottom();
     });
 }
+
+function getFocusableElements(container) {
+    return [...container.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => !element.hidden && element.getClientRects().length > 0);
+}
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+        if (modal && !modal.classList.contains('hidden')) {
+            closeModal();
+        } else if (document.querySelector('.app-shell.drawer-open')) {
+            closeDrawers();
+        }
+        return;
+    }
+
+    if (event.key !== 'Tab') {
+        return;
+    }
+
+    const activeDialog = modal && !modal.classList.contains('hidden')
+        ? modal.querySelector('[role="dialog"]')
+        : document.querySelector('.sidebar.is-open, .right-rail.is-open');
+    if (!activeDialog) {
+        return;
+    }
+
+    const focusable = getFocusableElements(activeDialog);
+    if (!focusable.length) {
+        event.preventDefault();
+        activeDialog.focus();
+        return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+});
 
 setRandomTagline();
 updateVoiceButtonState();
