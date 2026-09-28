@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#061520" />
+    <title>Vex</title>
+    <link rel="stylesheet" href="/styles.css" />
+</head>
+
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <div class="brand-mark">V</div>
+                <div class="brand-copy">
+                    <span class="brand-name">VEX</span>
+                    <span class="mini-tag">Always here. Always thinking.</span>
+                </div>
+            </div>
+
+            <nav class="nav" aria-label="Sidebar navigation">
+                <button class="nav-item active" type="button" data-action="new-chat">
+                    <span class="nav-icon">💬</span>
+                    <span>Chat</span>
+                </button>
+                <button class="nav-item" type="button" data-action="search-history">
+                    <span class="nav-icon">⌕</span>
+                    <span>Search</span>
+                </button>
+                <button class="nav-item" type="button" data-action="open-files">
+                    <span class="nav-icon">▣</span>
+                    <span>Files</span>
+                </button>
+                <button class="nav-item" type="button" data-action="tasks">
+                    <span class="nav-icon">✓</span>
+                    <span>Tasks</span>
+                </button>
+                <button class="nav-item" type="button" data-action="calendar">
+                    <span class="nav-icon">◫</span>
+                    <span>Calendar</span>
+                </button>
+                <button class="nav-item" type="button" data-action="settings">
+                    <span class="nav-icon">⚙</span>
+                    <span>Settings</span>
+                </button>
+            </nav>
+
+            <div class="user-card" id="profileButton" tabindex="0" role="button" aria-label="Open profile menu">
+                <div class="user-avatar">K</div>
+                <div class="user-details">
+                    <div class="user-name">Kiplangat Ezra</div>
+                    <div class="user-plan">Free Plan</div>
+                </div>
+                <span class="chevron">›</span>
+            </div>
+        </aside>
+
+        <main class="workspace">
+            <header class="topbar">
+                <div class="status-pill">
+                    <span id="tagline" class="brand-inline">VEX</span>
+                    <span class="status-dot"></span>
+                    <span>Online</span>
+                </div>
+                <div class="top-actions" aria-label="Top actions">
+                    <span class="icon-btn">⌕</span>
+                    <span class="icon-btn">☼</span>
+                    <span class="icon-btn">◌</span>
+                    <button id="resetButton" class="icon-btn reset-mini" type="button"
+                        aria-label="Reset conversation">⟲</button>
+                </div>
+            </header>
+
+            <div class="hero-wrap">
+                <div id="emptyState" class="empty-state">
+                    <div class="hero-mark">V</div>
+                    <div class="hero-wordmark">VEX</div>
+                    <h2>Good evening, Ezra.</h2>
+                    <p>What would you like to talk about today?</p>
+
+                    <div class="quick-actions">
+                        <button type="button">Explain something</button>
+                        <button type="button">Help me plan</button>
+                        <button type="button">Give me ideas</button>
+                        <button type="button">Just chat</button>
+                    </div>
+                </div>
+
+                <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+                <button id="jumpToLatest" class="jump-to-latest hidden" type="button">Jump to latest</button>
+                <div id="typingIndicator" class="typing-indicator hidden" aria-live="polite" aria-label="Vex is typing">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span class="typing-label">typing…</span>
+                </div>
+            </div>
+
+            <form id="chatForm" class="composer" autocomplete="off">
+                <button class="tool-btn" type="button" aria-label="Add" data-action="open-files">＋</button>
+                <label class="sr-only" for="messageInput">Message</label>
+                <textarea id="messageInput" name="message" rows="1" maxlength="2000" placeholder="Type your message ..."
+                    aria-label="Type your message"></textarea>
+                <button id="voiceButton" class="voice-btn" type="button" aria-label="Voice input" data-state="idle"
+                    title="Voice input">
+                    <span class="voice-icon" aria-hidden="true">◔</span>
+                </button>
+                <button type="submit" id="sendButton" class="send-btn" aria-label="Send message">
+                    <span>➤</span>
+                </button>
+            </form>
+        </main>
+
+        <aside class="right-rail">
+            <div class="mini-panel hero-panel">
+                <div class="mini-brand-wrap">
+                    <div class="mini-brand">V</div>
+                    <div class="mini-brand-text">
+                        <span class="mini-title">VEX</span>
+                        <span class="mini-subtitle">Your AI Companion</span>
+                    </div>
+                </div>
+                <div class="mini-slogan">"Better questions. Brighter ideas. A calmer you."</div>
+            </div>
+
+            <div class="mini-panel quick-panel">
+                <div class="rail-title-row">
+                    <h3>Quick Info</h3>
+                    <span class="arrow">›</span>
+                </div>
+                <div class="quick-grid">
+                    <div class="quick-item"><span>◔</span><label>Time</label><strong>19:12</strong></div>
+                    <div class="quick-item"><span>◫</span><label>Date</label><strong>10 Apr</strong></div>
+                    <div class="quick-item"><span>☁</span><label>Weather</label><strong>Partly cloudy</strong></div>
+                    <div class="quick-item"><span>◎</span><label>Mode</label><strong>Chat Mode</strong></div>
+                </div>
+            </div>
+
+            <div class="mini-panel recents-panel">
+                <div class="rail-title-row">
+                    <h3>Recent Chats</h3>
+                    <button type="button" class="link-btn" id="viewAllRecentChats">View all</button>
+                </div>
+                <ul class="recent-list" id="recentList">
+                    <li><span class="chat-dot">◔</span><span>Building a study plan</span><time>2h ago</time></li>
+                    <li><span class="chat-dot">◔</span><span>Best offline music player</span><time>5h ago</time></li>
+                    <li><span class="chat-dot">◔</span><span>Ansrel transfer news</span><time>1d ago</time></li>
+                    <li><span class="chat-dot">◔</span><span>Flutter app ideas</span><time>1d ago</time></li>
+                    <li><span class="chat-dot">◔</span><span>Life advice</span><time>2d ago</time></li>
+                </ul>
+            </div>
+
+            <div class="mini-panel quote-panel">
+                <p>“Discipline today, freedom tomorrow.”</p>
+                <span>— VEX</span>
+            </div>
+        </aside>
+    </div>
+
+    <input id="filePicker" type="file" class="sr-only" aria-label="Select file" />
+
+    <div id="appModal" class="app-modal hidden" aria-hidden="true">
+        <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+            <div class="modal-header">
+                <h3 id="modalTitle">VEX</h3>
+                <button type="button" class="modal-close" id="closeModal" aria-label="Close dialog">×</button>
+            </div>
+            <div id="modalBody" class="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+
+</html>
