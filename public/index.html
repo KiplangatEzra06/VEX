@@ -33,14 +33,6 @@
                     <span class="nav-icon">▣</span>
                     <span>Files</span>
                 </button>
-                <button class="nav-item" type="button" data-action="tasks">
-                    <span class="nav-icon">✓</span>
-                    <span>Tasks</span>
-                </button>
-                <button class="nav-item" type="button" data-action="calendar">
-                    <span class="nav-icon">◫</span>
-                    <span>Calendar</span>
-                </button>
                 <button class="nav-item" type="button" data-action="settings">
                     <span class="nav-icon">⚙</span>
                     <span>Settings</span>
@@ -63,11 +55,7 @@
                     aria-controls="leftDrawer" aria-expanded="false" title="Open navigation">
                     <span aria-hidden="true">☰</span>
                 </button>
-                <div class="status-pill">
-                    <span id="tagline" class="brand-inline">VEX</span>
-                    <span class="status-dot"></span>
-                    <span>Online</span>
-                </div>
+                <div class="topbar-spacer" aria-hidden="true"></div>
                 <button id="openRecentDrawer" class="mobile-panel-btn" type="button" aria-label="Open recent chats"
                     aria-controls="rightDrawer" aria-expanded="false" title="Open recent chats">
                     <span aria-hidden="true">◷</span>
@@ -82,14 +70,14 @@
                 <div id="emptyState" class="empty-state">
                     <div class="hero-mark">V</div>
                     <div class="hero-wordmark">VEX</div>
-                    <h2>Good evening, Ezra.</h2>
-                    <p>What would you like to talk about today?</p>
+                    <h2>Welcome, <span id="welcomeDisplayName">Ezra</span>!</h2>
+                    <p>How can I help you today?</p>
 
                     <div class="quick-actions">
-                        <button type="button">Explain something</button>
-                        <button type="button">Help me plan</button>
-                        <button type="button">Give me ideas</button>
-                        <button type="button">Just chat</button>
+                        <button type="button" data-quick-action="Explain something">Explain something</button>
+                        <button type="button" data-quick-action="Help me plan">Help me plan</button>
+                        <button type="button" data-quick-action="Give me ideas">Give me ideas</button>
+                        <button type="button" data-quick-action="Just chat">Just chat</button>
                     </div>
                 </div>
 
@@ -133,48 +121,25 @@
             </form>
         </main>
 
-        <aside class="right-rail" id="rightDrawer" aria-label="Conversation details and recent chats">
-            <div class="mini-panel hero-panel">
-                <div class="mini-brand-wrap">
-                    <div class="mini-brand">V</div>
-                    <div class="mini-brand-text">
-                        <span class="mini-title">VEX</span>
-                        <span class="mini-subtitle">Your AI Companion</span>
-                    </div>
+        <aside class="right-rail" id="rightDrawer" aria-label="Conversation history panel">
+            <div class="history-shell">
+                <div class="history-header-row">
+                    <h3>Chat history</h3>
+                    <button class="history-panel-button" type="button" aria-label="Open history actions">◫</button>
                 </div>
-                <div class="mini-slogan">"Better questions. Brighter ideas. A calmer you."</div>
-            </div>
 
-            <div class="mini-panel quick-panel">
-                <div class="rail-title-row">
-                    <h3>Quick Info</h3>
-                    <span class="arrow">›</span>
+                <div class="history-search-wrap">
+                    <span class="history-search-icon" aria-hidden="true">⌕</span>
+                    <input id="historySearchInput" class="history-search-input" type="search" placeholder="Search..."
+                        aria-label="Search chats" />
                 </div>
-                <div class="quick-grid">
-                    <div class="quick-item"><span>◔</span><label>Time</label><strong>19:12</strong></div>
-                    <div class="quick-item"><span>◫</span><label>Date</label><strong>10 Apr</strong></div>
-                    <div class="quick-item"><span>☁</span><label>Weather</label><strong>Partly cloudy</strong></div>
-                    <div class="quick-item"><span>◎</span><label>Mode</label><strong>Chat Mode</strong></div>
-                </div>
-            </div>
 
-            <div class="mini-panel recents-panel">
-                <div class="rail-title-row">
-                    <h3>Recent Chats</h3>
-                    <button type="button" class="link-btn" id="viewAllRecentChats">View all</button>
-                </div>
-                <ul class="recent-list" id="recentList">
-                    <li><span class="chat-dot">◔</span><span>Building a study plan</span><time>2h ago</time></li>
-                    <li><span class="chat-dot">◔</span><span>Best offline music player</span><time>5h ago</time></li>
-                    <li><span class="chat-dot">◔</span><span>Ansrel transfer news</span><time>1d ago</time></li>
-                    <li><span class="chat-dot">◔</span><span>Flutter app ideas</span><time>1d ago</time></li>
-                    <li><span class="chat-dot">◔</span><span>Life advice</span><time>2d ago</time></li>
-                </ul>
-            </div>
+                <ul class="history-list" id="recentList" aria-live="polite"></ul>
 
-            <div class="mini-panel quote-panel">
-                <p>“Discipline today, freedom tomorrow.”</p>
-                <span>— VEX</span>
+                <div class="history-panel-actions">
+                    <button id="deleteSelectedButton" class="soft-action hidden" type="button">Delete selected</button>
+                    <button id="createNewChatButton" class="primary-action" type="button">Create new chat</button>
+                </div>
             </div>
         </aside>
         <button id="drawerScrim" class="drawer-scrim hidden" type="button" aria-label="Close side panel"></button>

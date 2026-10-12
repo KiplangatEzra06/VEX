@@ -13,13 +13,19 @@ const modal = document.getElementById('appModal');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const recentList = document.getElementById('recentList');
+const historySearchInput = document.getElementById('historySearchInput');
+const deleteSelectedButton = document.getElementById('deleteSelectedButton');
+const createNewChatButton = document.getElementById('createNewChatButton');
+const welcomeDisplayName = document.getElementById('welcomeDisplayName');
 const voiceButton = document.getElementById('voiceButton');
 const drawerScrim = document.getElementById('drawerScrim');
 const openNavDrawerButton = document.getElementById('openNavDrawer');
 const openRecentDrawerButton = document.getElementById('openRecentDrawer');
 
 const STORAGE_KEY = 'vex-conversations';
+const PASSCODE_STORAGE_KEY = 'vex-passcode';
 let activeHistory = [];
+let selectedHistoryIds = new Set();
 let activeConversationId = null;
 let isRequestPending = false;
 let requestController = null;
@@ -105,6 +111,55 @@ function setRandomTagline() {
     }
 
     tagline.textContent = 'VEX';
+}
+
+function resolveDisplayName() {
+    const storedName = [
+        localStorage.getItem('vex-display-name'),
+        localStorage.getItem('vex-user-name'),
+        localStorage.getItem('displayName'),
+        localStorage.getItem('profileName'),
+        document.querySelector('.user-name')?.textContent,
+        'Ezra',
+    ].find((value) => typeof value === 'string' && value.trim());
+
+    const nextName = String(storedName || 'Ezra').trim() || 'Ezra';
+    localStorage.setItem('vex-display-name', nextName);
+    return nextName;
+}
+
+function syncDisplayNames() {
+    const displayName = resolveDisplayName();
+    const userName = document.querySelector('.user-name');
+    if (userName) {
+        userName.textContent = displayName;
+    }
+    if (welcomeDisplayName) {
+        welcomeDisplayName.textContent = displayName;
+    }
+}
+
+function getRelativeTimeLabel(timestamp) {
+    const date = new Date(timestamp || Date.now());
+    const diffMs = Date.now() - date.getTime();
+    const minutes = Math.max(1, Math.round(diffMs / 60000));
+
+    if (minutes < 60) {
+        return `${minutes}m ago`;
+    }
+
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) {
+        return `${hours}h ago`;
+    }
+
+    const days = Math.round(hours / 24);
+    return `${days}d ago`;
+}
+
+function getConversationPreview(conversation) {
+    const firstUserMessage = (conversation.messages || []).find((message) => message?.role === 'user')?.content || conversation.title || 'No messages yet';
+    return String(firstUserMessage).replace(/\s+/g, ' ').trim().slice(0, 110);
 }
 
 function setEmptyStateVisible(visible) {
@@ -203,7 +258,7 @@ function renderHistory(history) {
         return;
     }
 
-    chatMessages.innerHTML = '';
+    chatMessages.replaceChildren();
     setEmptyStateVisible(!Array.isArray(history) || history.length === 0);
 
     if (!Array.isArray(history) || history.length === 0) {
@@ -372,57 +427,97 @@ function updateConversationMessageLists() {
     buildRecentList();
 }
 
+function updateDeleteSelectionState() {
+    if (!deleteSelectedButton) {
+        return;
+    }
+
+    deleteSelectedButton.classList.toggle('hidden', selectedHistoryIds.size === 0);
+}
+
 function buildRecentList() {
     if (!recentList) {
         return;
     }
 
-    const conversations = sortConversations(activeHistory);
+    const trimmedQuery = (historySearchInput?.value || '').trim().toLowerCase();
+    const conversations = sortConversations(activeHistory).filter((conversation) => {
+        if (!trimmedQuery) {
+            return true;
+        }
+
+        const haystack = `${conversation.title || ''} ${(conversation.messages || []).map((message) => message?.content || '').join(' ')}`.toLowerCase();
+        return haystack.includes(trimmedQuery);
+    });
+
+    recentList.replaceChildren();
+
     if (!conversations.length) {
-        recentList.replaceChildren();
         const emptyItem = document.createElement('li');
-        emptyItem.className = 'recent-empty';
-        emptyItem.textContent = 'No recent chats yet';
+        emptyItem.className = 'history-empty';
+        emptyItem.textContent = trimmedQuery ? 'No matching chats' : 'No chats yet';
         recentList.appendChild(emptyItem);
+        updateDeleteSelectionState();
         return;
     }
 
-    recentList.replaceChildren();
-    conversations.slice(0, 8).forEach((conversation) => {
+    conversations.forEach((conversation) => {
         const item = document.createElement('li');
-        const button = document.createElement('button');
-        const copy = document.createElement('span');
+        item.className = 'history-item-row';
+
+        const checkboxWrap = document.createElement('label');
+        checkboxWrap.className = 'history-checkbox';
+        checkboxWrap.setAttribute('aria-label', `Select ${conversation.title || 'conversation'}`);
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selectedHistoryIds.has(conversation.id);
+        checkbox.addEventListener('change', (event) => {
+            if (event.target.checked) {
+                selectedHistoryIds.add(conversation.id);
+            } else {
+                selectedHistoryIds.delete(conversation.id);
+            }
+            updateDeleteSelectionState();
+        });
+
+        checkboxWrap.appendChild(checkbox);
+
+        const threadButton = document.createElement('button');
+        threadButton.type = 'button';
+        threadButton.className = 'history-row';
+        threadButton.dataset.conversationId = conversation.id;
+        threadButton.classList.toggle('active', conversation.id === activeConversationId);
+        threadButton.setAttribute('aria-label', `Open conversation ${conversation.title || 'untitled'}`);
+
+        const icon = document.createElement('span');
+        icon.className = 'history-avatar';
+        icon.textContent = 'V';
+
+        const meta = document.createElement('div');
+        meta.className = 'history-meta';
+
         const title = document.createElement('span');
-        const preview = document.createElement('span');
-        const lastUpdated = new Date(conversation.updatedAt || conversation.createdAt || Date.now());
-        const when = lastUpdated.toLocaleDateString([], { month: 'short', day: 'numeric' });
-        const lastMessage = conversation.messages?.at(-1)?.content || 'No messages yet';
-
-        button.type = 'button';
-        button.className = 'recent-entry';
-        button.dataset.conversationId = conversation.id;
-        button.classList.toggle('active', conversation.id === activeConversationId);
-        button.setAttribute('aria-current', conversation.id === activeConversationId ? 'page' : 'false');
-        title.className = 'recent-title';
+        title.className = 'history-title';
         title.textContent = conversation.title || 'Untitled conversation';
-        preview.className = 'recent-preview';
-        preview.textContent = String(lastMessage).replace(/\s+/g, ' ').trim();
-        copy.className = 'recent-copy';
-        copy.append(title, preview);
 
-        const time = document.createElement('time');
-        time.dateTime = lastUpdated.toISOString();
-        time.textContent = when;
-        const marker = document.createElement('span');
-        marker.className = 'chat-dot';
-        marker.setAttribute('aria-hidden', 'true');
-        marker.textContent = '◔';
+        const preview = document.createElement('span');
+        preview.className = 'history-preview';
+        preview.textContent = getConversationPreview(conversation);
 
-        button.append(marker, copy, time);
-        button.addEventListener('click', () => selectConversation(conversation.id));
-        item.appendChild(button);
+        const time = document.createElement('span');
+        time.className = 'history-time';
+        time.textContent = getRelativeTimeLabel(conversation.updatedAt || conversation.createdAt || Date.now());
+
+        meta.append(title, preview);
+        threadButton.append(icon, meta, time);
+        threadButton.addEventListener('click', () => selectConversation(conversation.id));
+
+        item.append(checkboxWrap, threadButton);
         recentList.appendChild(item);
     });
+
+    updateDeleteSelectionState();
 }
 
 function selectConversation(conversationId) {
@@ -438,6 +533,65 @@ function selectConversation(conversationId) {
     closeDrawers();
 }
 
+function createNewConversationSession() {
+    const nextConversation = createEmptyConversation();
+    activeHistory = [nextConversation, ...activeHistory.filter((conversation) => conversation.id !== nextConversation.id)];
+    activeConversationId = nextConversation.id;
+    selectedHistoryIds.clear();
+    persistConversationSet();
+    renderHistory([]);
+    setEmptyStateVisible(true);
+    buildRecentList();
+    closeDrawers();
+    if (messageInput) {
+        messageInput.focus();
+    }
+}
+
+async function deleteSelectedConversations() {
+    const selectedIds = [...selectedHistoryIds];
+    if (!selectedIds.length) {
+        return;
+    }
+
+    const successfulIds = [];
+    for (const conversationId of selectedIds) {
+        try {
+            await requestJson(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+            successfulIds.push(conversationId);
+        } catch (error) {
+            console.error('Unable to delete conversation:', conversationId, error);
+        }
+    }
+
+    if (!successfulIds.length) {
+        return;
+    }
+
+    activeHistory = activeHistory.filter((conversation) => !successfulIds.includes(conversation.id));
+    selectedHistoryIds.clear();
+
+    if (!activeHistory.length) {
+        const nextConversation = createEmptyConversation();
+        activeHistory = [nextConversation];
+        activeConversationId = nextConversation.id;
+        renderHistory([]);
+        setEmptyStateVisible(true);
+    } else if (!activeHistory.some((conversation) => conversation.id === activeConversationId)) {
+        activeConversationId = activeHistory[0].id;
+        renderHistory((getActiveConversation()?.messages || []).slice());
+        setEmptyStateVisible(!getActiveConversation()?.messages?.length);
+    }
+
+    persistConversationSet();
+    buildRecentList();
+}
+
 function openModal(title, content) {
     if (!modal || !modalBody || !modalTitle) {
         return;
@@ -445,7 +599,7 @@ function openModal(title, content) {
 
     modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
-    modalBody.innerHTML = content;
+    modalBody.replaceChildren(content);
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
     requestAnimationFrame(() => {
@@ -480,15 +634,19 @@ function closeModal() {
 }
 
 function openHistorySearch() {
-    const content = `
-        <input id="historySearchInput" class="search-input" type="text" placeholder="Search saved history..." aria-label="Search saved history" />
-        <ul class="history-list" id="historyResults"></ul>
-    `;
+    const content = document.createElement('div');
+    const searchInput = document.createElement('input');
+    searchInput.id = 'historySearchInputModal';
+    searchInput.className = 'search-input';
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search saved history...';
+    searchInput.setAttribute('aria-label', 'Search saved history');
 
+    const results = document.createElement('ul');
+    results.className = 'history-list';
+    results.id = 'historyResults';
+    content.append(searchInput, results);
     openModal('History Search', content);
-
-    const searchInput = document.getElementById('historySearchInput');
-    const results = document.getElementById('historyResults');
 
     const renderResults = (query = '') => {
         const normalized = query.trim().toLowerCase();
@@ -500,14 +658,25 @@ function openHistorySearch() {
             : activeHistory;
 
         if (!filtered.length) {
-            results.innerHTML = '<li class="action-item">No matching conversation history found.</li>';
+            const emptyResult = document.createElement('li');
+            emptyResult.className = 'action-item';
+            emptyResult.textContent = 'No matching conversation history found.';
+            results.replaceChildren(emptyResult);
             return;
         }
 
-        results.innerHTML = sortConversations(filtered).slice(0, 12).map((conversation) => {
+        const resultItems = sortConversations(filtered).slice(0, 12).map((conversation) => {
             const preview = conversation.messages?.[0]?.content || conversation.title || 'Conversation';
-            return `<li><button type="button" class="history-item" data-conversation-id="${conversation.id}">${String(preview).replace(/\s+/g, ' ').slice(0, 90)}</button></li>`;
-        }).join('');
+            const item = document.createElement('li');
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'history-item';
+            button.dataset.conversationId = conversation.id;
+            button.textContent = String(preview).replace(/\s+/g, ' ').slice(0, 90);
+            item.appendChild(button);
+            return item;
+        });
+        results.replaceChildren(...resultItems);
 
         results.querySelectorAll('.history-item').forEach((button) => {
             button.addEventListener('click', () => {
@@ -530,24 +699,40 @@ function openHistorySearch() {
 }
 
 function openSettingsPanel() {
-    const content = `
-        <p class="info-block">Adjust the local experience for VEX. These preferences stay in your browser.</p>
-        <div class="settings-list">
-            <div class="settings-row">
-                <span>Compact mode</span>
-                <button type="button" class="toggle active" data-setting="compact" aria-label="Toggle compact mode"></button>
-            </div>
-            <div class="settings-row">
-                <span>Typing glow</span>
-                <button type="button" class="toggle active" data-setting="glow" aria-label="Toggle typing glow"></button>
-            </div>
-            <div class="settings-row">
-                <span>Auto-scroll to latest</span>
-                <button type="button" class="toggle active" data-setting="autoscroll" aria-label="Toggle auto-scroll"></button>
-            </div>
-        </div>
-        <div class="modal-actions"><button type="button" class="primary-action" id="dismissSettings">Done</button></div>
-    `;
+    const content = document.createElement('div');
+    const description = document.createElement('p');
+    description.className = 'info-block';
+    description.textContent = 'Adjust the local experience for VEX. These preferences stay in your browser.';
+
+    const settingsList = document.createElement('div');
+    settingsList.className = 'settings-list';
+    [
+        ['Compact mode', 'compact'],
+        ['Typing glow', 'glow'],
+        ['Auto-scroll to latest', 'autoscroll'],
+    ].forEach(([label, setting]) => {
+        const row = document.createElement('div');
+        row.className = 'settings-row';
+        const settingLabel = document.createElement('span');
+        settingLabel.textContent = label;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'toggle active';
+        toggle.dataset.setting = setting;
+        toggle.setAttribute('aria-label', `Toggle ${label.toLowerCase()}`);
+        row.append(settingLabel, toggle);
+        settingsList.appendChild(row);
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    const doneButton = document.createElement('button');
+    doneButton.type = 'button';
+    doneButton.className = 'primary-action';
+    doneButton.id = 'dismissSettings';
+    doneButton.textContent = 'Done';
+    actions.appendChild(doneButton);
+    content.append(description, settingsList, actions);
 
     openModal('Settings', content);
 
@@ -564,14 +749,27 @@ function openSettingsPanel() {
 }
 
 function openProfileMenu() {
-    const content = `
-        <p class="info-block">Kiplangat Ezra</p>
-        <ul class="action-list">
-            <li><button type="button" class="action-item" data-action="profile">View Profile</button></li>
-            <li><button type="button" class="action-item" data-action="status">Status: Online</button></li>
-            <li><button type="button" class="action-item" data-action="logout">Sign out</button></li>
-        </ul>
-    `;
+    const content = document.createElement('div');
+    const profileName = document.createElement('p');
+    profileName.className = 'info-block';
+    profileName.textContent = 'Kiplangat Ezra';
+    const actions = document.createElement('ul');
+    actions.className = 'action-list';
+    [
+        ['View Profile', 'profile'],
+        ['Status: Online', 'status'],
+        ['Sign out', 'logout'],
+    ].forEach(([label, action]) => {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'action-item';
+        button.dataset.action = action;
+        button.textContent = label;
+        item.appendChild(button);
+        actions.appendChild(item);
+    });
+    content.append(profileName, actions);
 
     openModal('Profile', content);
     modalBody.querySelectorAll('.action-item').forEach((button) => {
@@ -585,12 +783,62 @@ function openProfileMenu() {
 }
 
 function showPlaceholderModal(title, message) {
-    const content = `<p class="info-block">${message}</p>`;
+    const content = document.createElement('p');
+    content.className = 'info-block';
+    content.textContent = message;
     openModal(title, content);
 }
 
 function persistConversationSet() {
     writeConversationsToStorage(activeHistory);
+}
+
+async function requestJson(endpoint, options = {}) {
+    let passcode = sessionStorage.getItem(PASSCODE_STORAGE_KEY);
+    if (!passcode) {
+        passcode = window.prompt('Enter your VEX passcode');
+        if (!passcode) {
+            throw new Error('A passcode is required to use VEX.');
+        }
+        sessionStorage.setItem(PASSCODE_STORAGE_KEY, passcode);
+    }
+
+    const sendRequest = (value) => fetch(endpoint, {
+        ...options,
+        headers: {
+            ...options.headers,
+            'X-Vex-Passcode': value,
+        },
+    });
+
+    let response = await sendRequest(passcode);
+    if (response.status === 401) {
+        sessionStorage.removeItem(PASSCODE_STORAGE_KEY);
+        passcode = window.prompt('Incorrect passcode. Enter your VEX passcode again.');
+        if (!passcode) {
+            throw new Error('A valid passcode is required to use VEX.');
+        }
+        sessionStorage.setItem(PASSCODE_STORAGE_KEY, passcode);
+        response = await sendRequest(passcode);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+
+    if (!contentType.includes('application/json')) {
+        throw new Error('VEX returned an unexpected response. Please try again.');
+    }
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+        if (response.status === 401) {
+            sessionStorage.removeItem(PASSCODE_STORAGE_KEY);
+            throw new Error('The passcode was not accepted.');
+        }
+        throw new Error(payload?.error || 'The request could not be completed.');
+    }
+
+    return payload;
 }
 
 function openDrawer(panelId, trigger) {
@@ -637,13 +885,7 @@ function ensureConversationTitle(conversation, messageText) {
 
 async function loadHistory() {
     try {
-        const response = await fetch('/api/history');
-        const payload = await response.json();
-
-        if (!response.ok) {
-            throw new Error(payload.error || 'Failed to load history.');
-        }
-
+        const payload = await requestJson('/api/history');
         const serverHistory = Array.isArray(payload.history) ? payload.history : [];
         const storedHistory = readConversationsFromStorage();
         activeHistory = serverHistory.length ? serverHistory : storedHistory.length ? storedHistory : [];
@@ -704,22 +946,31 @@ async function sendMessage(messageText) {
     autoResizeTextarea();
 
     try {
-        const response = await fetch('/api/chat', {
+        const payload = await requestJson('/api/chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                message: messageText,
-                conversationId: activeConversationId,
+                messages: (activeConversation?.messages || [])
+                    .slice(-20)
+                    .map((message) => {
+                        const role = message.role === 'assistant' || message.role === 'model'
+                            ? 'assistant'
+                            : message.role === 'user'
+                                ? 'user'
+                                : null;
+                        return role && typeof message.content === 'string'
+                            ? { role, content: message.content.slice(0, 2000) }
+                            : null;
+                    })
+                    .filter(Boolean),
             }),
             signal: requestController.signal,
         });
 
-        const payload = await response.json();
-
-        if (!response.ok) {
-            throw new Error(payload.error || 'Vex failed to respond.');
+        if (typeof payload.reply !== 'string') {
+            throw new Error('VEX returned an invalid model response.');
         }
 
         const responseTimestamp = new Date().toISOString();
@@ -728,13 +979,7 @@ async function sendMessage(messageText) {
             speakResponse(payload.reply);
         }
 
-        if (payload.conversationId) {
-            activeConversationId = payload.conversationId;
-        }
-
-        if (payload.conversation) {
-            upsertConversationInHistory(payload.conversation);
-        } else if (activeConversation) {
+        if (activeConversation) {
             activeConversation.messages.push({
                 id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
                 role: 'assistant',
@@ -778,18 +1023,13 @@ function stopGeneration() {
 async function resetConversation() {
     try {
         const currentConversationId = activeConversationId;
-        const response = await fetch('/api/reset', {
+        const payload = await requestJson('/api/reset', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(currentConversationId ? { conversationId: currentConversationId } : {}),
         });
-        const payload = await response.json();
-
-        if (!response.ok) {
-            throw new Error(payload.error || 'Reset failed.');
-        }
 
         if (currentConversationId) {
             activeHistory = activeHistory.filter((conversation) => conversation.id !== currentConversationId);
@@ -802,7 +1042,7 @@ async function resetConversation() {
 
         activeConversationId = activeHistory[0].id;
         persistConversationSet();
-        chatMessages.innerHTML = '';
+        chatMessages.replaceChildren();
         setEmptyStateVisible(true);
         buildRecentList();
     } catch (error) {
@@ -828,16 +1068,14 @@ function bindActionButtons() {
         button.addEventListener('click', () => {
             const action = button.dataset.action;
             const actions = {
-                'new-chat': () => {
-                    const nextConversation = createEmptyConversation();
-                    activeHistory = [nextConversation, ...activeHistory];
-                    activeConversationId = nextConversation.id;
-                    persistConversationSet();
-                    renderHistory([]);
-                    setEmptyStateVisible(true);
-                    buildRecentList();
+                'new-chat': createNewConversationSession,
+                'search-history': () => {
+                    if (historySearchInput) {
+                        historySearchInput.focus();
+                        historySearchInput.select();
+                    }
+                    openDrawer('rightDrawer', openRecentDrawerButton);
                 },
-                'search-history': openHistorySearch,
                 'open-files': () => filePicker?.click(),
                 tasks: () => showPlaceholderModal('Tasks', 'Task tracking is not part of this build yet. VEX can manage notes and planning once this interface is connected to a real task backend.'),
                 calendar: () => showPlaceholderModal('Calendar', 'Calendar access is not connected in this local build. This panel is intentionally a placeholder until that service is available.'),
@@ -933,13 +1171,28 @@ function bindActionButtons() {
         });
     }
 
+    const quickActionMap = {
+        'Explain something': 'Break down a concept or topic in plain language.',
+        'Help me plan': 'Map out steps, priorities, and a clear direction.',
+        'Give me ideas': 'Explore creative options and useful directions.',
+        'Just chat': 'Swap thoughts on anything and everything.',
+    };
+
     document.querySelectorAll('.quick-actions button').forEach((button) => {
+        const label = button.dataset.quickAction || button.textContent.trim();
+        const description = quickActionMap[label] || 'Start a fresh conversation with VEX.';
+        const labelElement = document.createElement('strong');
+        labelElement.textContent = label;
+        const descriptionElement = document.createElement('span');
+        descriptionElement.textContent = description;
+        button.replaceChildren(labelElement, descriptionElement);
+
         button.addEventListener('click', () => {
-            const prompt = button.textContent.trim();
             if (messageInput) {
-                messageInput.value = prompt;
+                messageInput.value = label;
                 messageInput.focus();
                 autoResizeTextarea();
+                updateSendButtonState();
             }
         });
     });
@@ -961,11 +1214,6 @@ function bindActionButtons() {
     const profileButton = document.getElementById('profileButton');
     if (profileButton) {
         profileButton.addEventListener('click', openProfileMenu);
-    }
-
-    const viewAllRecentChats = document.getElementById('viewAllRecentChats');
-    if (viewAllRecentChats) {
-        viewAllRecentChats.addEventListener('click', openHistorySearch);
     }
 
     const addButton = document.querySelector('.tool-btn[data-action="open-files"]');
@@ -1006,6 +1254,18 @@ function bindActionButtons() {
             showPlaceholderModal('Files', `${name} selected. File upload is enabled locally, but no backend storage is connected yet.`);
             event.target.value = '';
         });
+    }
+
+    if (historySearchInput) {
+        historySearchInput.addEventListener('input', buildRecentList);
+    }
+
+    if (createNewChatButton) {
+        createNewChatButton.addEventListener('click', createNewConversationSession);
+    }
+
+    if (deleteSelectedButton) {
+        deleteSelectedButton.addEventListener('click', deleteSelectedConversations);
     }
 }
 
@@ -1139,6 +1399,7 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
+syncDisplayNames();
 setRandomTagline();
 updateVoiceButtonState();
 bindActionButtons();
