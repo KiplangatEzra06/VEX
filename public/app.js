@@ -16,18 +16,29 @@ const recentList = document.getElementById('recentList');
 const historySearchInput = document.getElementById('historySearchInput');
 const deleteSelectedButton = document.getElementById('deleteSelectedButton');
 const createNewChatButton = document.getElementById('createNewChatButton');
+const newChatButton = document.getElementById('newChatButton');
 const welcomeDisplayName = document.getElementById('welcomeDisplayName');
 const voiceButton = document.getElementById('voiceButton');
 const drawerScrim = document.getElementById('drawerScrim');
 const openNavDrawerButton = document.getElementById('openNavDrawer');
 const openRecentDrawerButton = document.getElementById('openRecentDrawer');
+const contextToggle = document.getElementById('contextToggle');
+const contextCollapse = document.getElementById('contextCollapse');
+const sidebarCollapse = document.getElementById('sidebarCollapse');
+const desktopSidebarToggle = document.getElementById('desktopSidebarToggle');
+const conversationTitle = document.getElementById('conversationTitle');
 
 const STORAGE_KEY = 'vex-conversations';
 const PASSCODE_STORAGE_KEY = 'vex-passcode';
+const THEME_STORAGE_KEY = 'vex-theme';
+const ACTIVE_CONVERSATION_KEY = 'vex-active-conversation';
+const SIDEBAR_STORAGE_KEY = 'vex-sidebar-collapsed';
+const CONTEXT_STORAGE_KEY = 'vex-context-collapsed';
 let activeHistory = [];
 let selectedHistoryIds = new Set();
 let activeConversationId = null;
 let isRequestPending = false;
+let isHistoryLoading = true;
 let requestController = null;
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
@@ -113,6 +124,47 @@ function setRandomTagline() {
     tagline.textContent = 'VEX';
 }
 
+function applyTheme(theme, persist = true) {
+    const validTheme = ['system', 'dark', 'light'].includes(theme) ? theme : 'system';
+    if (validTheme === 'system') {
+        document.documentElement.removeAttribute('data-theme');
+    } else {
+        document.documentElement.dataset.theme = validTheme;
+    }
+    if (persist) {
+        localStorage.setItem(THEME_STORAGE_KEY, validTheme);
+    }
+}
+
+function setConversationHeading(conversation) {
+    if (conversationTitle) {
+        conversationTitle.textContent = conversation?.title || 'New conversation';
+    }
+}
+
+function setShellPreference(className, storageKey, enabled) {
+    document.querySelector('.app-shell')?.classList.toggle(className, enabled);
+    localStorage.setItem(storageKey, String(enabled));
+}
+
+function updatePanelToggleState() {
+    const appShell = document.querySelector('.app-shell');
+    const contextIsCollapsed = appShell?.classList.contains('context-collapsed') || false;
+    const sidebarIsCollapsed = appShell?.classList.contains('sidebar-collapsed') || false;
+    [contextToggle, contextCollapse].forEach((button) => {
+        if (!button) return;
+        button.setAttribute('aria-pressed', String(contextIsCollapsed));
+        button.setAttribute('aria-label', `${contextIsCollapsed ? 'Expand' : 'Collapse'} conversation history`);
+        button.title = `${contextIsCollapsed ? 'Expand' : 'Collapse'} conversation history`;
+    });
+    [sidebarCollapse, desktopSidebarToggle].forEach((button) => {
+        if (!button) return;
+        button.setAttribute('aria-pressed', String(sidebarIsCollapsed));
+        button.setAttribute('aria-label', `${sidebarIsCollapsed ? 'Expand' : 'Collapse'} navigation`);
+        button.title = `${sidebarIsCollapsed ? 'Expand' : 'Collapse'} navigation`;
+    });
+}
+
 function resolveDisplayName() {
     const storedName = [
         localStorage.getItem('vex-display-name'),
@@ -181,7 +233,7 @@ function autoResizeTextarea() {
 
 function updateSendButtonState() {
     if (sendButton) {
-        sendButton.disabled = isRequestPending || !messageInput?.value.trim();
+        sendButton.disabled = isRequestPending || isHistoryLoading || !messageInput?.value.trim();
     }
 }
 
@@ -218,6 +270,7 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
         return;
     }
 
+    const shouldStickToBottom = isNearBottom();
     setEmptyStateVisible(false);
 
     const row = document.createElement('div');
@@ -232,7 +285,12 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-    bubble.textContent = text;
+    if (role === 'user') {
+        bubble.textContent = text;
+    } else {
+        bubble.classList.add('markdown-content');
+        bubble.appendChild(renderMarkdown(text));
+    }
 
     const meta = document.createElement('div');
     meta.className = 'message-meta';
@@ -246,11 +304,219 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
 
     requestAnimationFrame(() => {
         row.classList.add('visible');
-        if (isNearBottom()) {
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+        if (shouldStickToBottom) {
+            scrollToBottom();
         }
         updateJumpButtonState();
     });
+}
+
+function safeLinkTarget(value) {
+    try {
+        const url = new URL(value, window.location.origin);
+        return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+    } catch {
+        return null;
+    }
+}
+
+function appendInlineMarkdown(parent, text) {
+    const pattern = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|`[^`]+`|\[([^\]]+)\]\(([^)\s]+)\))/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = pattern.exec(text)) !== null) {
+        parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        const token = match[0];
+        let element;
+
+        if (token.startsWith('**') || token.startsWith('__')) {
+            element = document.createElement('strong');
+            element.textContent = token.slice(2, -2);
+        } else if (token.startsWith('`')) {
+            element = document.createElement('code');
+            element.textContent = token.slice(1, -1);
+        } else if (token.startsWith('[')) {
+            const href = safeLinkTarget(match[3]);
+            if (!href) {
+                parent.appendChild(document.createTextNode(token));
+                lastIndex = pattern.lastIndex;
+                continue;
+            }
+            element = document.createElement('a');
+            element.href = href;
+            element.target = '_blank';
+            element.rel = 'noopener noreferrer';
+            element.textContent = match[2];
+        } else {
+            element = document.createElement('em');
+            element.textContent = token.slice(1, -1);
+        }
+
+        parent.appendChild(element);
+        lastIndex = pattern.lastIndex;
+    }
+
+    parent.appendChild(document.createTextNode(text.slice(lastIndex)));
+}
+
+function appendHighlightedCode(codeElement, source, language) {
+    const normalizedLanguage = language.toLowerCase();
+    const shouldHighlight = ['js', 'javascript', 'ts', 'typescript', 'json', 'py', 'python', 'bash', 'sh'].includes(normalizedLanguage);
+    if (!shouldHighlight) {
+        codeElement.textContent = source;
+        return;
+    }
+
+    const keywordPattern = normalizedLanguage === 'json'
+        ? /("(?:\\.|[^"\\])*"\s*:|"(?:\\.|[^"\\])*"|\b(?:true|false|null)\b|-?\b\d+(?:\.\d+)?\b)/g
+        : /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\n]*|#[^\n]*|\b(?:const|let|var|function|return|if|else|for|while|class|new|async|await|import|export|from|def|True|False|None|print|echo|then|fi)\b|-?\b\d+(?:\.\d+)?\b)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = keywordPattern.exec(source)) !== null) {
+        codeElement.appendChild(document.createTextNode(source.slice(lastIndex, match.index)));
+        const token = match[0];
+        const span = document.createElement('span');
+        span.className = normalizedLanguage === 'json' && token.endsWith(':')
+            ? 'token-property'
+            : token.startsWith('//') || token.startsWith('#')
+                ? 'token-comment'
+                : token.startsWith('"') || token.startsWith("'") || token.startsWith('`')
+                    ? 'token-string'
+                    : /^\d/.test(token)
+                        ? 'token-number'
+                        : 'token-keyword';
+        span.textContent = token;
+        codeElement.appendChild(span);
+        lastIndex = keywordPattern.lastIndex;
+    }
+
+    codeElement.appendChild(document.createTextNode(source.slice(lastIndex)));
+}
+
+function renderMarkdown(markdown) {
+    const fragment = document.createDocumentFragment();
+    const lines = String(markdown).replace(/\r\n?/g, '\n').split('\n');
+    let paragraph = [];
+    let list = null;
+    let listType = '';
+    let quote = null;
+
+    const flushParagraph = () => {
+        if (!paragraph.length) return;
+        const element = document.createElement('p');
+        paragraph.forEach((line, index) => {
+            if (index) element.appendChild(document.createElement('br'));
+            appendInlineMarkdown(element, line);
+        });
+        fragment.appendChild(element);
+        paragraph = [];
+    };
+    const flushList = () => {
+        if (list) fragment.appendChild(list);
+        list = null;
+        listType = '';
+    };
+    const flushQuote = () => {
+        if (quote) fragment.appendChild(quote);
+        quote = null;
+    };
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const fence = line.match(/^\s*```([\w+-]*)\s*$/);
+        if (fence) {
+            flushParagraph();
+            flushList();
+            flushQuote();
+            const codeLines = [];
+            index += 1;
+            while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+                codeLines.push(lines[index]);
+                index += 1;
+            }
+            const language = fence[1] || 'code';
+            const block = document.createElement('div');
+            block.className = 'code-block';
+            const header = document.createElement('div');
+            header.className = 'code-header';
+            const label = document.createElement('span');
+            label.textContent = language;
+            const copyButton = document.createElement('button');
+            copyButton.type = 'button';
+            copyButton.className = 'code-copy';
+            copyButton.textContent = 'Copy';
+            copyButton.setAttribute('aria-label', 'Copy code block');
+            copyButton.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(codeLines.join('\n'));
+                    copyButton.textContent = 'Copied';
+                    window.setTimeout(() => { copyButton.textContent = 'Copy'; }, 1400);
+                } catch (error) {
+                    console.error('Unable to copy code block:', error);
+                    copyButton.textContent = 'Copy failed';
+                }
+            });
+            header.append(label, copyButton);
+            const pre = document.createElement('pre');
+            const code = document.createElement('code');
+            code.className = `language-${language.replace(/[^\w+-]/g, '')}`;
+            appendHighlightedCode(code, codeLines.join('\n'), language);
+            pre.appendChild(code);
+            block.append(header, pre);
+            fragment.appendChild(block);
+            continue;
+        }
+
+        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        const listItem = line.match(/^\s*(?:([-*+])|(\d+)\.)\s+(.+)$/);
+        const quoteLine = line.match(/^\s*>\s?(.*)$/);
+        if (!line.trim() || heading || listItem || quoteLine) {
+            flushParagraph();
+        }
+        if (!line.trim()) {
+            flushList();
+            flushQuote();
+            continue;
+        }
+        if (heading) {
+            flushList();
+            flushQuote();
+            const element = document.createElement(`h${heading[1].length}`);
+            appendInlineMarkdown(element, heading[2]);
+            fragment.appendChild(element);
+            continue;
+        }
+        if (listItem) {
+            flushQuote();
+            const nextListType = listItem[2] ? 'ol' : 'ul';
+            if (!list || listType !== nextListType) {
+                flushList();
+                list = document.createElement(nextListType);
+                listType = nextListType;
+            }
+            const item = document.createElement('li');
+            appendInlineMarkdown(item, listItem[3]);
+            list.appendChild(item);
+            continue;
+        }
+        if (quoteLine) {
+            flushList();
+            if (!quote) quote = document.createElement('blockquote');
+            if (quote.childNodes.length) quote.appendChild(document.createElement('br'));
+            appendInlineMarkdown(quote, quoteLine[1]);
+            continue;
+        }
+        flushList();
+        flushQuote();
+        paragraph.push(line);
+    }
+
+    flushParagraph();
+    flushList();
+    flushQuote();
+    return fragment;
 }
 
 function renderHistory(history) {
@@ -308,11 +574,57 @@ function setTypingState(isTyping) {
     if (chatForm) {
         chatForm.setAttribute('aria-busy', String(isTyping));
     }
+    document.querySelectorAll('.history-row, #newChatButton, #createNewChatButton, #deleteSelectedButton, #resetButton, .tool-btn').forEach((control) => {
+        control.disabled = isTyping || isHistoryLoading;
+    });
     if (composerStatus) {
         composerStatus.textContent = isTyping ? 'VEX is thinking...' : 'VEX can make mistakes. Check important details.';
     }
     updateSendButtonState();
     updateVoiceButtonState();
+}
+
+function makeChatContext(existingMessages, currentMessage) {
+    const candidates = [...existingMessages, currentMessage]
+        .slice(-20)
+        .map((message) => {
+            const role = message.role === 'assistant' || message.role === 'model'
+                ? 'assistant'
+                : message.role === 'user'
+                    ? 'user'
+                    : null;
+            return role && typeof message.content === 'string'
+                ? { role, content: message.content.slice(0, 2000) }
+                : null;
+        })
+        .filter(Boolean);
+    const selected = [];
+    const encoder = new TextEncoder();
+
+    for (const message of candidates.reverse()) {
+        const next = [message, ...selected];
+        if (encoder.encode(JSON.stringify({ messages: next })).length > 9000) {
+            if (!selected.length) selected.push(message);
+            break;
+        }
+        selected.unshift(message);
+    }
+
+    return selected;
+}
+
+function showRequestError(message, retry) {
+    const errorRow = document.createElement('div');
+    errorRow.className = 'message-error';
+    const errorText = document.createElement('span');
+    errorText.textContent = message;
+    const retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.textContent = 'Retry';
+    retryButton.addEventListener('click', retry);
+    errorRow.append(errorText, retryButton);
+    chatMessages?.appendChild(errorRow);
+    scrollToBottom();
 }
 
 function createConversationId() {
@@ -461,7 +773,18 @@ function buildRecentList() {
         return;
     }
 
+    let currentDateGroup = '';
     conversations.forEach((conversation) => {
+        const dateGroup = formatDayLabel(conversation.updatedAt || conversation.createdAt || Date.now());
+        if (dateGroup !== currentDateGroup) {
+            const divider = document.createElement('li');
+            divider.className = 'history-date';
+            divider.textContent = dateGroup;
+            divider.setAttribute('aria-hidden', 'true');
+            recentList.appendChild(divider);
+            currentDateGroup = dateGroup;
+        }
+
         const item = document.createElement('li');
         item.className = 'history-item-row';
 
@@ -527,6 +850,8 @@ function selectConversation(conversationId) {
     }
 
     activeConversationId = conversation.id;
+    localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+    setConversationHeading(conversation);
     renderHistory(conversation.messages || []);
     setEmptyStateVisible(!conversation.messages?.length);
     buildRecentList();
@@ -534,9 +859,13 @@ function selectConversation(conversationId) {
 }
 
 function createNewConversationSession() {
+    if (isHistoryLoading || isRequestPending) return;
+
     const nextConversation = createEmptyConversation();
     activeHistory = [nextConversation, ...activeHistory.filter((conversation) => conversation.id !== nextConversation.id)];
     activeConversationId = nextConversation.id;
+    localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+    setConversationHeading(nextConversation);
     selectedHistoryIds.clear();
     persistConversationSet();
     renderHistory([]);
@@ -554,8 +883,17 @@ async function deleteSelectedConversations() {
         return;
     }
 
+    if (!window.confirm(`Delete ${selectedIds.length} selected conversation${selectedIds.length === 1 ? '' : 's'}? This cannot be undone.`)) {
+        return;
+    }
+
     const successfulIds = [];
     for (const conversationId of selectedIds) {
+        if (!/^\d+$/.test(String(conversationId))) {
+            successfulIds.push(conversationId);
+            continue;
+        }
+
         try {
             await requestJson(`/api/conversations/${encodeURIComponent(conversationId)}`, {
                 method: 'DELETE',
@@ -570,9 +908,11 @@ async function deleteSelectedConversations() {
     }
 
     if (!successfulIds.length) {
+        if (composerStatus) composerStatus.textContent = 'No conversations were deleted. Check your connection and try again.';
         return;
     }
 
+    const failedCount = selectedIds.length - successfulIds.length;
     activeHistory = activeHistory.filter((conversation) => !successfulIds.includes(conversation.id));
     selectedHistoryIds.clear();
 
@@ -580,16 +920,22 @@ async function deleteSelectedConversations() {
         const nextConversation = createEmptyConversation();
         activeHistory = [nextConversation];
         activeConversationId = nextConversation.id;
+        setConversationHeading(nextConversation);
         renderHistory([]);
         setEmptyStateVisible(true);
     } else if (!activeHistory.some((conversation) => conversation.id === activeConversationId)) {
         activeConversationId = activeHistory[0].id;
+        localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+        setConversationHeading(activeHistory[0]);
         renderHistory((getActiveConversation()?.messages || []).slice());
         setEmptyStateVisible(!getActiveConversation()?.messages?.length);
     }
 
     persistConversationSet();
     buildRecentList();
+    if (failedCount && composerStatus) {
+        composerStatus.textContent = `${failedCount} conversation${failedCount === 1 ? '' : 's'} could not be deleted and remain in history.`;
+    }
 }
 
 function openModal(title, content) {
@@ -702,26 +1048,34 @@ function openSettingsPanel() {
     const content = document.createElement('div');
     const description = document.createElement('p');
     description.className = 'info-block';
-    description.textContent = 'Adjust the local experience for VEX. These preferences stay in your browser.';
+    description.textContent = 'Choose how VEX looks. Your choice is stored in this browser.';
 
-    const settingsList = document.createElement('div');
-    settingsList.className = 'settings-list';
+    const themeLabel = document.createElement('p');
+    themeLabel.className = 'eyebrow';
+    themeLabel.textContent = 'APPEARANCE';
+    const themeOptions = document.createElement('div');
+    themeOptions.className = 'theme-options';
+    themeOptions.setAttribute('role', 'group');
+    themeOptions.setAttribute('aria-label', 'Color theme');
+    const selectedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
     [
-        ['Compact mode', 'compact'],
-        ['Typing glow', 'glow'],
-        ['Auto-scroll to latest', 'autoscroll'],
-    ].forEach(([label, setting]) => {
-        const row = document.createElement('div');
-        row.className = 'settings-row';
-        const settingLabel = document.createElement('span');
-        settingLabel.textContent = label;
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'toggle active';
-        toggle.dataset.setting = setting;
-        toggle.setAttribute('aria-label', `Toggle ${label.toLowerCase()}`);
-        row.append(settingLabel, toggle);
-        settingsList.appendChild(row);
+        ['System', 'system'],
+        ['Dark', 'dark'],
+        ['Light', 'light'],
+    ].forEach(([label, value]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'theme-option';
+        button.dataset.themeValue = value;
+        button.setAttribute('aria-pressed', String(selectedTheme === value));
+        button.textContent = label;
+        button.addEventListener('click', () => {
+            applyTheme(value);
+            themeOptions.querySelectorAll('.theme-option').forEach((option) => {
+                option.setAttribute('aria-pressed', String(option.dataset.themeValue === value));
+            });
+        });
+        themeOptions.appendChild(button);
     });
 
     const actions = document.createElement('div');
@@ -732,15 +1086,9 @@ function openSettingsPanel() {
     doneButton.id = 'dismissSettings';
     doneButton.textContent = 'Done';
     actions.appendChild(doneButton);
-    content.append(description, settingsList, actions);
+    content.append(description, themeLabel, themeOptions, actions);
 
     openModal('Settings', content);
-
-    document.querySelectorAll('.toggle').forEach((toggle) => {
-        toggle.addEventListener('click', () => {
-            toggle.classList.toggle('active');
-        });
-    });
 
     const dismissSettings = document.getElementById('dismissSettings');
     if (dismissSettings) {
@@ -752,33 +1100,17 @@ function openProfileMenu() {
     const content = document.createElement('div');
     const profileName = document.createElement('p');
     profileName.className = 'info-block';
-    profileName.textContent = 'Kiplangat Ezra';
-    const actions = document.createElement('ul');
-    actions.className = 'action-list';
-    [
-        ['View Profile', 'profile'],
-        ['Status: Online', 'status'],
-        ['Sign out', 'logout'],
-    ].forEach(([label, action]) => {
-        const item = document.createElement('li');
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'action-item';
-        button.dataset.action = action;
-        button.textContent = label;
-        item.appendChild(button);
-        actions.appendChild(item);
-    });
-    content.append(profileName, actions);
+    profileName.textContent = resolveDisplayName();
+    const signOut = document.createElement('button');
+    signOut.type = 'button';
+    signOut.className = 'action-item';
+    signOut.textContent = 'Forget passcode on this device';
+    content.append(profileName, signOut);
 
     openModal('Profile', content);
-    modalBody.querySelectorAll('.action-item').forEach((button) => {
-        button.addEventListener('click', () => {
-            if (button.dataset.action === 'status') {
-                button.textContent = 'Status: Listening';
-            }
-            closeModal();
-        });
+    signOut.addEventListener('click', () => {
+        sessionStorage.removeItem(PASSCODE_STORAGE_KEY);
+        window.location.reload();
     });
 }
 
@@ -848,6 +1180,10 @@ function openDrawer(panelId, trigger) {
     }
 
     document.querySelectorAll('.sidebar, .right-rail').forEach((drawer) => drawer.classList.remove('is-open'));
+    if (panelId === 'rightDrawer' && document.querySelector('.app-shell')?.classList.contains('context-collapsed')) {
+        setShellPreference('context-collapsed', CONTEXT_STORAGE_KEY, false);
+        updatePanelToggleState();
+    }
     drawerReturnFocus = trigger;
     panel.classList.add('is-open');
     document.querySelector('.app-shell')?.classList.add('drawer-open');
@@ -884,29 +1220,49 @@ function ensureConversationTitle(conversation, messageText) {
 }
 
 async function loadHistory() {
+    const storedHistory = readConversationsFromStorage();
+    const storedActiveId = localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+
     try {
         const payload = await requestJson('/api/history');
         const serverHistory = Array.isArray(payload.history) ? payload.history : [];
-        const storedHistory = readConversationsFromStorage();
-        activeHistory = serverHistory.length ? serverHistory : storedHistory.length ? storedHistory : [];
+        const mergedHistory = new Map(storedHistory.map((conversation) => [String(conversation.id), conversation]));
+        serverHistory.forEach((conversation) => {
+            mergedHistory.set(String(conversation.id), conversation);
+        });
+        activeHistory = sortConversations([...mergedHistory.values()]);
 
         if (!activeHistory.length) {
             const newConversation = createEmptyConversation();
             activeHistory = [newConversation];
         }
 
-        const selected = getActiveConversation() || activeHistory[0];
+        const selected = activeHistory.find((conversation) => String(conversation.id) === storedActiveId) || activeHistory[0];
         activeConversationId = selected?.id || activeHistory[0].id;
+        localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+        setConversationHeading(selected);
         renderHistory((getActiveConversation()?.messages || []).slice());
         buildRecentList();
         persistConversationSet();
     } catch (error) {
-        console.error('History load error:', error);
-        activeHistory = [createEmptyConversation()];
-        activeConversationId = activeHistory[0].id;
+        console.warn('History load failed; using browser storage:', error.message);
+        activeHistory = storedHistory.length ? storedHistory : [createEmptyConversation()];
+        const selected = activeHistory.find((conversation) => String(conversation.id) === storedActiveId) || activeHistory[0];
+        activeConversationId = selected.id;
+        localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+        setConversationHeading(selected);
+        if (composerStatus) {
+            composerStatus.textContent = 'History is temporarily unavailable. Showing conversations saved on this device.';
+        }
         persistConversationSet();
-        renderHistory([]);
+        renderHistory(selected.messages || []);
         buildRecentList();
+    } finally {
+        isHistoryLoading = false;
+        updateSendButtonState();
+        document.querySelectorAll('#newChatButton, #createNewChatButton').forEach((button) => {
+            button.disabled = false;
+        });
     }
 }
 
@@ -922,26 +1278,19 @@ async function sendMessage(messageText) {
 
     ensureActiveConversation();
     const activeConversation = getActiveConversation();
-    const now = new Date().toISOString();
-
-    if (activeConversation) {
-        activeConversation.messages.push({
-            id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-            role: 'user',
-            content: messageText,
-            timestamp: now,
-        });
-        ensureConversationTitle(activeConversation, messageText);
-        activeConversation.updatedAt = now;
-        persistConversationSet();
+    if (!activeConversation) {
+        return;
     }
+    const now = new Date().toISOString();
+    const sentUserMessage = { role: 'user', content: messageText };
+    const draftToPreserve = messageInput.value.trim() === messageText ? '' : messageInput.value;
 
     isRequestPending = true;
-    let wasStopped = false;
     requestController = new AbortController();
     setTypingState(true);
 
     addMessage('user', messageText, now);
+    let historySaved = true;
     messageInput.value = '';
     autoResizeTextarea();
 
@@ -952,19 +1301,8 @@ async function sendMessage(messageText) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                messages: (activeConversation?.messages || [])
-                    .slice(-20)
-                    .map((message) => {
-                        const role = message.role === 'assistant' || message.role === 'model'
-                            ? 'assistant'
-                            : message.role === 'user'
-                                ? 'user'
-                                : null;
-                        return role && typeof message.content === 'string'
-                            ? { role, content: message.content.slice(0, 2000) }
-                            : null;
-                    })
-                    .filter(Boolean),
+                conversationId: activeConversation.id,
+                messages: makeChatContext(activeConversation.messages || [], sentUserMessage),
             }),
             signal: requestController.signal,
         });
@@ -972,38 +1310,70 @@ async function sendMessage(messageText) {
         if (typeof payload.reply !== 'string') {
             throw new Error('VEX returned an invalid model response.');
         }
+        historySaved = payload.historySaved !== false;
+        if (draftToPreserve) messageInput.value = draftToPreserve;
 
         const responseTimestamp = new Date().toISOString();
+        const submittedAt = now;
+        activeConversation.messages.push({
+            id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+            role: 'user',
+            content: messageText,
+            timestamp: submittedAt,
+        });
+        activeConversation.messages.push({
+            id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+            role: 'assistant',
+            content: payload.reply,
+            timestamp: responseTimestamp,
+        });
+        ensureConversationTitle(activeConversation, messageText);
+        activeConversation.updatedAt = responseTimestamp;
+
+        let savedConversation = activeConversation;
+        if (payload.conversation) {
+            activeHistory = activeHistory.filter((conversation) => String(conversation.id) !== String(activeConversation.id));
+            upsertConversationInHistory(payload.conversation);
+            savedConversation = getActiveConversation();
+        } else {
+            if (payload.conversationId) {
+                activeConversation.id = String(payload.conversationId);
+            }
+            activeConversation.updatedAt = responseTimestamp;
+            persistConversationSet();
+        }
+
+        if (savedConversation && payload.title) {
+            savedConversation.title = payload.title;
+        }
+        if (savedConversation) setConversationHeading(savedConversation);
+        localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+
         addMessage('vex', payload.reply, responseTimestamp);
         if (shouldSpeakResponse) {
             speakResponse(payload.reply);
         }
 
-        if (activeConversation) {
-            activeConversation.messages.push({
-                id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-                role: 'assistant',
-                content: payload.reply,
-                timestamp: responseTimestamp,
-            });
-            activeConversation.updatedAt = responseTimestamp;
-            persistConversationSet();
-        }
-
         buildRecentList();
     } catch (error) {
         if (error.name === 'AbortError') {
-            wasStopped = true;
+            renderHistory(activeConversation.messages || []);
+            if (!messageInput.value.trim()) messageInput.value = draftToPreserve || messageText;
+            if (composerStatus) composerStatus.textContent = 'Generation stopped. Your message is ready to send again.';
         } else {
-            addMessage('vex', error.message || 'Something went wrong.', new Date().toISOString());
+            renderHistory(activeConversation.messages || []);
+            if (!messageInput.value.trim()) messageInput.value = draftToPreserve || messageText;
+            showRequestError(error.message || "VEX couldn't complete the request.", () => sendMessage(messageText));
         }
     } finally {
         isRequestPending = false;
         requestController = null;
         setTypingState(false);
-        if (wasStopped && composerStatus) {
-            composerStatus.textContent = 'Generation stopped.';
+        if (!historySaved && composerStatus) {
+            composerStatus.textContent = 'Reply received. History is saved on this device but could not sync to the server.';
         }
+        autoResizeTextarea();
+        updateSendButtonState();
         if (!document.querySelector('.app-modal:not(.hidden)')) {
             messageInput.focus();
         }
@@ -1021,39 +1391,39 @@ function stopGeneration() {
 }
 
 async function resetConversation() {
-    try {
-        const currentConversationId = activeConversationId;
-        const payload = await requestJson('/api/reset', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(currentConversationId ? { conversationId: currentConversationId } : {}),
-        });
+    const currentConversation = getActiveConversation();
+    if (!currentConversation || !window.confirm('Delete this conversation? This cannot be undone.')) {
+        return;
+    }
 
-        if (currentConversationId) {
-            activeHistory = activeHistory.filter((conversation) => conversation.id !== currentConversationId);
+    try {
+        if (/^\d+$/.test(String(currentConversation.id))) {
+            await requestJson(`/api/conversations/${encodeURIComponent(currentConversation.id)}`, {
+                method: 'DELETE',
+            });
         }
 
+        activeHistory = activeHistory.filter((conversation) => conversation.id !== currentConversation.id);
         if (!activeHistory.length) {
-            const nextConversation = createEmptyConversation();
-            activeHistory = [nextConversation];
+            activeHistory = [createEmptyConversation()];
         }
 
         activeConversationId = activeHistory[0].id;
+        localStorage.setItem(ACTIVE_CONVERSATION_KEY, String(activeConversationId));
+        setConversationHeading(activeHistory[0]);
         persistConversationSet();
-        chatMessages.replaceChildren();
-        setEmptyStateVisible(true);
+        renderHistory(activeHistory[0].messages || []);
         buildRecentList();
     } catch (error) {
         console.error('Reset error:', error);
+        showRequestError(error.message || 'Unable to delete this conversation.', () => resetConversation());
     }
 }
 
 function handleComposerSubmit(event) {
     event.preventDefault();
 
-    if (!messageInput || isRequestPending) {
+    if (!messageInput || isRequestPending || isHistoryLoading) {
         return;
     }
 
@@ -1067,27 +1437,29 @@ function bindActionButtons() {
     document.querySelectorAll('.nav-item').forEach((button) => {
         button.addEventListener('click', () => {
             const action = button.dataset.action;
-            const actions = {
-                'new-chat': createNewConversationSession,
-                'search-history': () => {
-                    if (historySearchInput) {
-                        historySearchInput.focus();
-                        historySearchInput.select();
-                    }
-                    openDrawer('rightDrawer', openRecentDrawerButton);
-                },
-                'open-files': () => filePicker?.click(),
-                tasks: () => showPlaceholderModal('Tasks', 'Task tracking is not part of this build yet. VEX can manage notes and planning once this interface is connected to a real task backend.'),
-                calendar: () => showPlaceholderModal('Calendar', 'Calendar access is not connected in this local build. This panel is intentionally a placeholder until that service is available.'),
-                settings: openSettingsPanel,
-            };
-
-            if (actions[action]) {
-                actions[action]();
-                closeDrawers(false);
+            if (action === 'chat') {
+                scrollToBottom();
                 messageInput?.focus();
+            } else if (action === 'search-history') {
+                if (window.matchMedia('(max-width: 760px)').matches) {
+                    openDrawer('rightDrawer', openRecentDrawerButton);
+                    return;
+                } else if (historySearchInput) {
+                    setShellPreference('context-collapsed', CONTEXT_STORAGE_KEY, false);
+                    updatePanelToggleState();
+                    historySearchInput.focus();
+                }
+            } else if (action === 'open-files') {
+                filePicker?.click();
+            } else if (action === 'settings') {
+                openSettingsPanel();
             }
+            closeDrawers(false);
         });
+    });
+
+    [newChatButton, createNewChatButton].forEach((button) => {
+        button?.addEventListener('click', createNewConversationSession);
     });
 
     if (voiceButton) {
@@ -1167,7 +1539,14 @@ function bindActionButtons() {
             voiceState.processing = false;
             voiceState.error = null;
             updateVoiceButtonState();
-            recognition.start();
+            try {
+                recognition.start();
+            } catch (error) {
+                voiceState.listening = false;
+                voiceState.error = error.message || 'Voice input could not start.';
+                updateVoiceButtonState();
+                console.error('Unable to start voice input:', error);
+            }
         });
     }
 
@@ -1197,33 +1576,9 @@ function bindActionButtons() {
         });
     });
 
-    document.querySelectorAll('.link-btn').forEach((button) => {
-        button.addEventListener('click', openHistorySearch);
-    });
-
-    document.querySelectorAll('.recent-list li').forEach((item) => {
-        item.addEventListener('click', () => {
-            const index = Number(item.dataset.index ?? '');
-            if (!Number.isNaN(index)) {
-                const start = Math.max(0, index - 2);
-                renderHistory(activeHistory.slice(start, index + 1));
-            }
-        });
-    });
-
     const profileButton = document.getElementById('profileButton');
     if (profileButton) {
         profileButton.addEventListener('click', openProfileMenu);
-    }
-
-    const addButton = document.querySelector('.tool-btn[data-action="open-files"]');
-    if (addButton && filePicker) {
-        addButton.addEventListener('click', () => filePicker.click());
-    }
-
-    const placeholderVoiceButton = document.querySelector('.tool-btn[data-action="voice-placeholder"]');
-    if (placeholderVoiceButton) {
-        placeholderVoiceButton.addEventListener('click', () => showPlaceholderModal('Voice', 'Voice input is not connected in this local build. Use the text composer for now.'));
     }
 
     if (modal) {
@@ -1251,7 +1606,7 @@ function bindActionButtons() {
             }
 
             const name = file.name || 'Selected file';
-            showPlaceholderModal('Files', `${name} selected. File upload is enabled locally, but no backend storage is connected yet.`);
+            showPlaceholderModal('File selected', `${name} is available only in this browser. VEX does not currently upload file contents.`);
             event.target.value = '';
         });
     }
@@ -1260,13 +1615,36 @@ function bindActionButtons() {
         historySearchInput.addEventListener('input', buildRecentList);
     }
 
-    if (createNewChatButton) {
-        createNewChatButton.addEventListener('click', createNewConversationSession);
-    }
-
     if (deleteSelectedButton) {
         deleteSelectedButton.addEventListener('click', deleteSelectedConversations);
     }
+
+    [contextToggle, contextCollapse].forEach((button) => {
+        button?.addEventListener('click', () => {
+            if (button === contextCollapse && window.matchMedia('(max-width: 760px)').matches) {
+                closeDrawers();
+                return;
+            }
+            const collapsed = !document.querySelector('.app-shell')?.classList.contains('context-collapsed');
+            setShellPreference('context-collapsed', CONTEXT_STORAGE_KEY, collapsed);
+            updatePanelToggleState();
+        });
+    });
+
+    [sidebarCollapse, desktopSidebarToggle].forEach((button) => {
+        button?.addEventListener('click', () => {
+            const collapsed = !document.querySelector('.app-shell')?.classList.contains('sidebar-collapsed');
+            setShellPreference('sidebar-collapsed', SIDEBAR_STORAGE_KEY, collapsed);
+            updatePanelToggleState();
+        });
+    });
+
+    historySearchInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && historySearchInput.value) {
+            historySearchInput.value = '';
+            buildRecentList();
+        }
+    });
 }
 
 function updateVoiceButtonState() {
@@ -1361,12 +1739,28 @@ function getFocusableElements(container) {
 }
 
 document.addEventListener('keydown', (event) => {
+    const target = event.target;
+    const isTypingTarget = target instanceof HTMLElement
+        && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+
     if (event.key === 'Escape') {
         if (modal && !modal.classList.contains('hidden')) {
             closeModal();
         } else if (document.querySelector('.app-shell.drawer-open')) {
             closeDrawers();
         }
+        return;
+    }
+
+    if (event.key === '/' && !isTypingTarget && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        if (window.matchMedia('(max-width: 760px)').matches) {
+            openDrawer('rightDrawer', openRecentDrawerButton);
+        } else {
+            setShellPreference('context-collapsed', CONTEXT_STORAGE_KEY, false);
+            updatePanelToggleState();
+        }
+        historySearchInput?.focus();
         return;
     }
 
@@ -1399,6 +1793,10 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
+applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'system', false);
+document.querySelector('.app-shell')?.classList.toggle('sidebar-collapsed', localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true');
+document.querySelector('.app-shell')?.classList.toggle('context-collapsed', localStorage.getItem(CONTEXT_STORAGE_KEY) === 'true');
+updatePanelToggleState();
 syncDisplayNames();
 setRandomTagline();
 updateVoiceButtonState();

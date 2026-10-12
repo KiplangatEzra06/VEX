@@ -4,48 +4,60 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#061520" />
-    <title>Vex</title>
+    <meta name="theme-color" content="#0A141C" />
+    <meta name="color-scheme" content="dark light" />
+    <title>VEX — Personal AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
 </head>
 
 <body>
     <div class="app-shell">
         <aside class="sidebar" id="leftDrawer" aria-label="Main navigation">
-            <div class="brand-block">
-                <div class="brand-mark">V</div>
-                <div class="brand-copy">
-                    <span class="brand-name">VEX</span>
-                    <span class="mini-tag">Always here. Always thinking.</span>
+            <div class="sidebar-top">
+                <div class="brand-block">
+                    <img class="brand-mark" src="/assets/vex-symbol.svg" alt="" />
+                    <div class="brand-copy">
+                        <span class="brand-name">VEX</span>
+                        <span class="mini-tag">Personal intelligence</span>
+                    </div>
                 </div>
+                <button id="sidebarCollapse" class="icon-btn sidebar-collapse" type="button"
+                    aria-label="Collapse navigation" title="Collapse navigation" aria-pressed="false">
+                    <span aria-hidden="true">‹</span>
+                </button>
             </div>
 
-            <nav class="nav" aria-label="Sidebar navigation">
-                <button class="nav-item active" type="button" data-action="new-chat">
-                    <span class="nav-icon">💬</span>
-                    <span>Chat</span>
+            <button class="new-chat-button" id="newChatButton" type="button" data-action="new-chat"
+                aria-label="Create a new conversation" title="New conversation">
+                <span aria-hidden="true">＋</span><span class="nav-label">New conversation</span>
+            </button>
+
+            <nav class="nav" aria-label="Workspace">
+                <button class="nav-item active" type="button" data-action="chat" aria-current="page" aria-label="Chat" title="Chat">
+                    <span class="nav-icon" aria-hidden="true">◫</span><span class="nav-label">Chat</span>
                 </button>
-                <button class="nav-item" type="button" data-action="search-history">
-                    <span class="nav-icon">⌕</span>
-                    <span>Search</span>
+                <button class="nav-item" type="button" data-action="search-history" aria-label="Search conversations" title="Search">
+                    <span class="nav-icon" aria-hidden="true">⌕</span><span class="nav-label">Search</span>
                 </button>
-                <button class="nav-item" type="button" data-action="open-files">
-                    <span class="nav-icon">▣</span>
-                    <span>Files</span>
+                <button class="nav-item" type="button" data-action="open-files" aria-label="Choose a local file" title="Files (local selection only)">
+                    <span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Files</span>
                 </button>
-                <button class="nav-item" type="button" data-action="settings">
-                    <span class="nav-icon">⚙</span>
-                    <span>Settings</span>
+                <button class="nav-item" type="button" data-action="settings" aria-label="Settings" title="Settings">
+                    <span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span>
                 </button>
             </nav>
 
-            <button class="user-card" id="profileButton" type="button" aria-label="Open profile menu">
-                <span class="user-avatar">K</span>
+            <div class="sidebar-spacer"></div>
+            <button class="user-card" id="profileButton" type="button" aria-label="Open account menu">
+                <span class="user-avatar" aria-hidden="true">E</span>
                 <span class="user-details">
-                    <span class="user-name">Kiplangat Ezra</span>
-                    <span class="user-plan">Free Plan</span>
+                    <span class="user-name">Ezra</span>
+                    <span class="user-plan">Personal workspace</span>
                 </span>
-                <span class="chevron">›</span>
+                <span class="chevron" aria-hidden="true">···</span>
             </button>
         </aside>
 
@@ -55,109 +67,132 @@
                     aria-controls="leftDrawer" aria-expanded="false" title="Open navigation">
                     <span aria-hidden="true">☰</span>
                 </button>
-                <div class="topbar-spacer" aria-hidden="true"></div>
-                <button id="openRecentDrawer" class="mobile-panel-btn" type="button" aria-label="Open recent chats"
-                    aria-controls="rightDrawer" aria-expanded="false" title="Open recent chats">
-                    <span aria-hidden="true">◷</span>
+                <button id="desktopSidebarToggle" class="icon-btn desktop-sidebar-toggle" type="button"
+                    aria-label="Collapse navigation" title="Collapse navigation">
+                    <span aria-hidden="true">☷</span>
                 </button>
-                <div class="top-actions" aria-label="Top actions">
-                    <button id="resetButton" class="icon-btn reset-mini" type="button" aria-label="Reset conversation"
-                        title="Reset conversation">⟲</button>
+                <div class="conversation-heading">
+                    <span class="eyebrow">WORKSPACE <span class="status-mark" aria-hidden="true"></span></span>
+                    <h1 id="conversationTitle">New conversation</h1>
+                </div>
+                <div class="top-actions">
+                    <button id="openRecentDrawer" class="mobile-panel-btn" type="button" aria-label="Open conversation history"
+                        aria-controls="rightDrawer" aria-expanded="false" title="Conversation history">
+                        <span aria-hidden="true">◷</span>
+                    </button>
+                    <button id="resetButton" class="icon-btn reset-mini" type="button"
+                        aria-label="Clear this conversation" title="Clear this conversation">
+                        <span aria-hidden="true">↺</span>
+                    </button>
+                    <button id="contextToggle" class="icon-btn context-toggle" type="button"
+                        aria-label="Collapse conversation history" title="Collapse conversation history" aria-pressed="false">
+                        <span aria-hidden="true">▤</span>
+                    </button>
                 </div>
             </header>
 
-            <div class="hero-wrap">
-                <div id="emptyState" class="empty-state">
-                    <div class="hero-mark">V</div>
-                    <div class="hero-wordmark">VEX</div>
-                    <h2>Welcome, <span id="welcomeDisplayName">Ezra</span>!</h2>
-                    <p>How can I help you today?</p>
-
-                    <div class="quick-actions">
-                        <button type="button" data-quick-action="Explain something">Explain something</button>
-                        <button type="button" data-quick-action="Help me plan">Help me plan</button>
-                        <button type="button" data-quick-action="Give me ideas">Give me ideas</button>
-                        <button type="button" data-quick-action="Just chat">Just chat</button>
+            <section class="conversation-stage" aria-label="Conversation">
+                <div class="hero-wrap">
+                    <div id="emptyState" class="empty-state">
+                        <img class="hero-mark" src="/assets/vex-symbol.svg" alt="" />
+                        <p class="hero-kicker">A little clarity goes a long way.</p>
+                        <h2>What are we thinking through?</h2>
+                        <p class="hero-description">Ask a question, untangle an idea, or start wherever you are.</p>
+                        <div class="quick-actions" aria-label="Suggested prompts">
+                            <button type="button" data-quick-action="Explain something">
+                                <strong>Explain something</strong><span>Make a complex idea clear</span>
+                            </button>
+                            <button type="button" data-quick-action="Help me plan">
+                                <strong>Help me plan</strong><span>Find a good next step</span>
+                            </button>
+                            <button type="button" data-quick-action="Give me ideas">
+                                <strong>Give me ideas</strong><span>Explore a few directions</span>
+                            </button>
+                            <button type="button" data-quick-action="Just chat">
+                                <strong>Just chat</strong><span>Start a conversation</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"
+                        aria-relevant="additions text" aria-label="Messages"></div>
+                    <button id="jumpToLatest" class="jump-to-latest hidden" type="button"
+                        aria-label="Jump to latest message">↓ <span>Latest</span></button>
+                    <div id="typingIndicator" class="typing-indicator hidden" aria-live="polite"
+                        aria-label="VEX is thinking">
+                        <span class="typing-orbit" aria-hidden="true"></span><span>Thinking</span>
+                        <span class="typing-dots" aria-hidden="true">···</span>
                     </div>
                 </div>
 
-                <div id="chatMessages" class="chat-messages" aria-live="polite" aria-relevant="additions text"></div>
-                <button id="jumpToLatest" class="jump-to-latest hidden" type="button"
-                    aria-label="Jump to latest message">Jump to latest</button>
-                <div id="typingIndicator" class="typing-indicator hidden" aria-live="polite" aria-label="Vex is typing">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                    <span class="typing-label">typing…</span>
-                </div>
-            </div>
-
-            <form id="chatForm" class="composer" autocomplete="off" aria-label="Send a message">
-                <div class="composer-box">
-                    <button class="tool-btn" type="button" aria-label="Add a file" data-action="open-files"
-                        title="Add a file">＋</button>
-                    <label class="sr-only" for="messageInput">Message</label>
-                    <textarea id="messageInput" name="message" rows="1" maxlength="2000" placeholder="Message VEX..."
-                        aria-label="Message VEX"></textarea>
-                    <button id="voiceButton" class="voice-btn" type="button" aria-label="Start voice input"
-                        data-state="idle" title="Voice input">
-                        <span class="voice-icon" aria-hidden="true">◔</span>
-                    </button>
-                    <button type="submit" id="sendButton" class="send-btn" aria-label="Send message"
-                        title="Send message" disabled>
-                        <span aria-hidden="true">↑</span>
-                    </button>
-                    <button id="stopButton" class="send-btn stop-btn hidden" type="button" aria-label="Stop generation"
-                        title="Stop generation">
-                        <span aria-hidden="true">■</span>
-                    </button>
-                </div>
-                <div class="composer-footer">
-                    <span id="composerStatus" role="status" aria-live="polite">VEX can make mistakes. Check important
-                        details.</span>
-                    <span class="keyboard-hint"><kbd>Enter</kbd> to send <span aria-hidden="true">·</span>
-                        <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line</span>
-                </div>
-            </form>
+                <form id="chatForm" class="composer" autocomplete="off" aria-label="Send a message">
+                    <div class="composer-box">
+                        <button class="tool-btn" type="button" aria-label="Choose a file"
+                            data-action="open-files" title="Choose a file (local selection only)">＋</button>
+                        <label class="sr-only" for="messageInput">Message VEX</label>
+                        <textarea id="messageInput" name="message" rows="1" maxlength="2000"
+                            placeholder="Message VEX..." aria-label="Message VEX"></textarea>
+                        <button id="voiceButton" class="voice-btn" type="button" aria-label="Start voice input"
+                            data-state="idle" aria-pressed="false" title="Voice input">
+                            <span class="voice-icon" aria-hidden="true">◉</span>
+                        </button>
+                        <button type="submit" id="sendButton" class="send-btn" aria-label="Send message"
+                            title="Send message" disabled>
+                            <span aria-hidden="true">↑</span>
+                        </button>
+                        <button id="stopButton" class="send-btn stop-btn hidden" type="button"
+                            aria-label="Stop generation" title="Stop generation">
+                            <span aria-hidden="true">■</span>
+                        </button>
+                    </div>
+                    <div class="composer-footer">
+                        <span id="composerStatus" role="status" aria-live="polite">VEX can make mistakes. Check important details.</span>
+                        <span class="keyboard-hint"><kbd>Enter</kbd> to send <span aria-hidden="true">·</span>
+                            <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line</span>
+                    </div>
+                </form>
+            </section>
         </main>
 
         <aside class="right-rail" id="rightDrawer" aria-label="Conversation history panel">
             <div class="history-shell">
                 <div class="history-header-row">
-                    <h3>Chat history</h3>
-                    <button class="history-panel-button" type="button" aria-label="Open history actions">◫</button>
+                    <div>
+                        <span class="eyebrow">YOUR SPACE</span>
+                        <h2>Conversations</h2>
+                    </div>
+                    <button class="history-panel-button" id="contextCollapse" type="button"
+                        aria-label="Collapse conversation history" title="Collapse conversation history"
+                        aria-pressed="false">›</button>
                 </div>
-
-                <div class="history-search-wrap">
+                <label class="history-search-wrap" for="historySearchInput">
                     <span class="history-search-icon" aria-hidden="true">⌕</span>
-                    <input id="historySearchInput" class="history-search-input" type="search" placeholder="Search..."
-                        aria-label="Search chats" />
-                </div>
-
-                <ul class="history-list" id="recentList" aria-live="polite"></ul>
-
+                    <input id="historySearchInput" class="history-search-input" type="search"
+                        placeholder="Find a conversation" aria-label="Search conversations" />
+                    <kbd>/</kbd>
+                </label>
+                <ul class="history-list" id="recentList" aria-label="Saved conversations"></ul>
                 <div class="history-panel-actions">
                     <button id="deleteSelectedButton" class="soft-action hidden" type="button">Delete selected</button>
-                    <button id="createNewChatButton" class="primary-action" type="button">Create new chat</button>
+                    <button id="createNewChatButton" class="primary-action" type="button">＋ <span>New conversation</span></button>
                 </div>
             </div>
         </aside>
         <button id="drawerScrim" class="drawer-scrim hidden" type="button" aria-label="Close side panel"></button>
     </div>
 
-    <input id="filePicker" type="file" class="sr-only" aria-label="Select file" />
+    <input id="filePicker" type="file" class="sr-only" aria-label="Choose a local file" />
 
     <div id="appModal" class="app-modal hidden" aria-hidden="true">
         <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle" tabindex="-1">
             <div class="modal-header">
-                <h3 id="modalTitle">VEX</h3>
+                <h2 id="modalTitle">VEX</h2>
                 <button type="button" class="modal-close" id="closeModal" aria-label="Close dialog">×</button>
             </div>
             <div id="modalBody" class="modal-body"></div>
         </div>
     </div>
 
-    <script src="/app.js"></script>
+    <script src="/app.js" defer></script>
 </body>
 
 </html>

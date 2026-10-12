@@ -192,6 +192,52 @@ export async function insertMessage(conversationId, role, content) {
     };
 }
 
+export async function saveConversationTurn(conversationId, initialTitle, userContent, assistantContent) {
+    const client = await pool.connect();
+    let targetId;
+
+    try {
+        await client.query('BEGIN');
+
+        const existingId = Number(conversationId);
+        const existing = Number.isSafeInteger(existingId) && existingId > 0
+            ? await client.query(
+                'SELECT id, title FROM conversations WHERE id = $1 FOR UPDATE',
+                [existingId]
+            )
+            : { rows: [] };
+
+        if (existing.rows[0]) {
+            targetId = existing.rows[0].id;
+            const currentTitle = existing.rows[0].title || 'New conversation';
+            const isUntitled = ['New conversation', 'New chat', 'Untitled chat'].includes(currentTitle);
+            await client.query(
+                'UPDATE conversations SET title = $1, updated_at = now() WHERE id = $2',
+                [isUntitled ? initialTitle : currentTitle, targetId]
+            );
+        } else {
+            const created = await client.query(
+                'INSERT INTO conversations(title, updated_at) VALUES ($1, now()) RETURNING id',
+                [initialTitle]
+            );
+            targetId = created.rows[0].id;
+        }
+
+        await client.query(
+            'INSERT INTO messages(conversation_id, role, content) VALUES ($1, $2, $3), ($1, $4, $5)',
+            [targetId, 'user', userContent, 'model', assistantContent]
+        );
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+
+    return getConversationDetails(targetId);
+}
+
 export async function deleteConversation(conversationId) {
     await query('DELETE FROM conversations WHERE id = $1', [conversationId]);
     return true;

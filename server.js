@@ -7,12 +7,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-    clearAllConversations,
+    buildConversationTitle,
     deleteConversation,
     fetchConversationHistory,
     getConversationDetails,
     listRecentConversations,
     loadSettings,
+    saveConversationTurn,
     saveSetting,
 } from './db.js';
 
@@ -198,9 +199,36 @@ app.get('/api/conversations/:id', async (req, res) => {
 });
 
 app.post('/api/chat', validateChatMessages, async (req, res) => {
+    const messages = req.body.messages;
+    const latestMessage = messages.at(-1);
+    if (!latestMessage || latestMessage.role !== 'user' || !latestMessage.content.trim()) {
+        return res.status(400).json({ error: 'Invalid chat messages.' });
+    }
+
     try {
-        const reply = await callOllama(req.body.messages);
-        return res.json({ reply });
+        const reply = await callOllama(messages);
+        if (!process.env.DATABASE_URL) {
+            return res.json({ reply, historySaved: false });
+        }
+
+        try {
+            const conversation = await saveConversationTurn(
+                req.body.conversationId,
+                buildConversationTitle(latestMessage.content),
+                latestMessage.content,
+                reply
+            );
+            return res.json({
+                reply,
+                historySaved: true,
+                conversationId: conversation.id,
+                title: conversation.title,
+                conversation,
+            });
+        } catch (error) {
+            console.error('Conversation persistence failed:', error?.code || error?.name || 'Error');
+            return res.json({ reply, historySaved: false });
+        }
     } catch (error) {
         console.error('Ollama chat request failed:', error?.name || 'Error', error?.message || 'Unknown error');
         return res.status(502).json({ error: "Vex couldn't reach the model." });
@@ -241,16 +269,13 @@ app.post('/api/reset', async (req, res) => {
     try {
         const requestedConversationId = typeof req.body?.conversationId === 'string' ? req.body.conversationId : null;
 
-        if (requestedConversationId) {
-            const id = Number(requestedConversationId);
-            if (Number.isFinite(id) && id > 0) {
-                await deleteConversation(id);
-                return res.json({ success: true, conversationId: String(id) });
-            }
+        const id = Number(requestedConversationId);
+        if (!requestedConversationId || !Number.isSafeInteger(id) || id <= 0) {
+            return res.status(400).json({ error: 'A valid conversation ID is required.' });
         }
 
-        await clearAllConversations();
-        return res.json({ success: true });
+        await deleteConversation(id);
+        return res.json({ success: true, conversationId: String(id) });
     } catch (error) {
         console.error('Reset failed:', error);
         return res.status(500).json({ error: 'Unable to reset conversations.' });
