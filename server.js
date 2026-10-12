@@ -1,126 +1,119 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import express from 'express';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
+import { createHash, timingSafeEqual } from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import {
+    buildConversationTitle,
     clearAllConversations,
     deleteConversation,
+    ensureConversation,
     fetchConversationHistory,
+    getConversationById,
     getConversationDetails,
+    insertMessage,
     listRecentConversations,
     loadSettings,
     saveSetting,
+    updateConversationTitle,
 } from './db.js';
+import { VEX_PERSONALITY_VERSION } from './ai/personality/core.js';
+import { inferBehaviorMode } from './ai/personality/behaviors.js';
+import { createContextSnapshot } from './ai/context/contextManager.js';
+import { getRelevantMemories, persistUsefulMemory } from './ai/memory/memoryManager.js';
 
 dotenv.config();
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gpt-oss:20b';
 const SYSTEM_PROMPT = 'You are Vex, a sleek, concise personal AI assistant.';
 
 app.set('trust proxy', 1);
-app.use(helmet({
-    contentSecurityPolicy: {
-        directives: {
-            defaultSrc: ["'self'"],
-            baseUri: ["'self'"],
-            fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-            formAction: ["'self'"],
-            frameAncestors: ["'self'"],
-            imgSrc: ["'self'", 'data:'],
-            objectSrc: ["'none'"],
-            scriptSrc: ["'self'"],
-            scriptSrcAttr: ["'none'"],
-            styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        },
-    },
-}));
-
-app.use((req, res, next) => {
+app.use(helmet());
+app.use('/api', (req, res, next) => {
     const origin = req.get('Origin');
     const allowedOrigin = process.env.ALLOWED_ORIGIN;
 
-    if (origin) {
-        res.vary('Origin');
-        if (!allowedOrigin || origin !== allowedOrigin) {
-            return res.status(403).json({ error: 'Origin not allowed.' });
-        }
+    if (origin && origin !== allowedOrigin) {
+        return res.status(403).json({ error: 'Origin not allowed.' });
+    }
 
+    if (origin) {
         res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Vex-Passcode');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader('Vary', 'Origin');
     }
 
     if (req.method === 'OPTIONS') {
-        return origin && origin === allowedOrigin ? res.sendStatus(204) : res.sendStatus(403);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Vex-Passcode');
+        res.setHeader('Access-Control-Max-Age', '600');
+        return res.sendStatus(204);
     }
 
     return next();
 });
 
-const chatRateLimiter = rateLimit({
+const chatRateLimit = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 20,
-    standardHeaders: 'draft-7',
+    standardHeaders: true,
     legacyHeaders: false,
-    handler: (_req, res) => res.status(429).json({ error: 'Too many chat requests. Please try again later.' }),
 });
+app.use('/api/chat', chatRateLimit);
+app.use('/api/conversations/:id/message', chatRateLimit);
 
-function requirePasscode(req, res, next) {
+app.use('/api', (req, res, next) => {
     const expectedPasscode = process.env.VEX_PASSCODE;
-    const providedPasscode = req.get('X-Vex-Passcode');
+    const suppliedPasscode = req.get('X-Vex-Passcode');
 
-    if (!expectedPasscode || !providedPasscode) {
+    if (!expectedPasscode) {
+        return res.status(503).json({ error: 'VEX is not configured.' });
+    }
+
+    if (typeof suppliedPasscode !== 'string') {
         return res.status(401).json({ error: 'Unauthorized.' });
     }
 
-    const expectedDigest = createHash('sha256').update(expectedPasscode).digest();
-    const providedDigest = createHash('sha256').update(providedPasscode).digest();
-
-    if (!timingSafeEqual(expectedDigest, providedDigest)) {
+    const expectedHash = createHash('sha256').update(expectedPasscode).digest();
+    const suppliedHash = createHash('sha256').update(suppliedPasscode).digest();
+    if (!timingSafeEqual(expectedHash, suppliedHash)) {
         return res.status(401).json({ error: 'Unauthorized.' });
     }
 
     return next();
-}
+});
 
-function validateChatMessages(req, res, next) {
+app.use(express.json({ limit: '10kb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+function validateMessages(req, res, next) {
     const { messages } = req.body || {};
-    if (!Array.isArray(messages) || messages.length > 20) {
-        return res.status(400).json({ error: 'Invalid chat messages.' });
+    if (!Array.isArray(messages) || messages.length === 0 || messages.length > 20) {
+        return res.status(400).json({ error: 'Invalid chat request.' });
     }
 
-    const messagesAreValid = messages.every((message) => (
+    const validMessages = messages.every((message) => (
         message
-        && typeof message === 'object'
-        && !Array.isArray(message)
         && (message.role === 'user' || message.role === 'assistant')
         && typeof message.content === 'string'
         && message.content.length <= 2000
     ));
 
-    if (!messagesAreValid) {
-        return res.status(400).json({ error: 'Invalid chat messages.' });
+    if (!validMessages) {
+        return res.status(400).json({ error: 'Invalid chat request.' });
     }
 
     return next();
 }
 
-app.use('/api/chat', chatRateLimiter);
-app.use('/api', requirePasscode);
-app.use(express.json({ limit: '10kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
-
 async function callOllama(messages) {
-    const apiKey = process.env.OLLAMA_API_KEY;
-    if (!apiKey) {
+    if (!process.env.OLLAMA_API_KEY) {
         throw new Error('OLLAMA_API_KEY is not configured.');
     }
 
@@ -132,15 +125,12 @@ async function callOllama(messages) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
+                Authorization: `Bearer ${process.env.OLLAMA_API_KEY}`,
             },
             body: JSON.stringify({
                 model: OLLAMA_MODEL,
                 stream: false,
-                messages: [
-                    { role: 'system', content: SYSTEM_PROMPT },
-                    ...messages,
-                ],
+                messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
             }),
             signal: controller.signal,
         });
@@ -152,16 +142,68 @@ async function callOllama(messages) {
         const data = await response.json();
         const reply = data?.message?.content;
         if (typeof reply !== 'string' || !reply.trim()) {
-            throw new Error('Ollama response did not contain message content.');
+            throw new Error('Ollama response did not contain message.content.');
         }
 
         return reply.trim();
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error('Ollama request timed out.');
+        }
+        throw error;
     } finally {
         clearTimeout(timeout);
     }
 }
 
-app.get('/api/history', async (_req, res) => {
+async function handleIncomingMessage(conversationId, messages) {
+    const latestMessage = messages.at(-1);
+    const messageText = latestMessage.role === 'user' ? latestMessage.content.trim() : '';
+
+    if (!messageText) {
+        const error = new Error('Invalid chat request.');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const requestedId = typeof conversationId === 'string' && /^\d+$/.test(conversationId.trim())
+        ? conversationId.trim()
+        : null;
+    let currentConversation = requestedId ? await getConversationById(requestedId) : null;
+
+    if (!currentConversation) {
+        currentConversation = await ensureConversation(null, buildConversationTitle(messageText));
+    }
+
+    const numericConversationId = Number(currentConversation.id);
+    const replyText = await callOllama(messages);
+
+    await insertMessage(numericConversationId, 'user', messageText);
+    await insertMessage(numericConversationId, 'model', replyText);
+
+    const nextTitle = !currentConversation.title || ['New conversation', 'New chat', 'Untitled chat'].includes(currentConversation.title)
+        ? buildConversationTitle(messageText)
+        : currentConversation.title;
+
+    await updateConversationTitle(numericConversationId, nextTitle);
+
+    const fullConversation = await getConversationDetails(numericConversationId);
+
+    persistUsefulMemory(messageText, replyText, {
+        project: 'VEX',
+        task: 'Digital counterpart development',
+        currentGoal: 'Support Ezra\'s thinking and workflow',
+    });
+
+    return {
+        reply: replyText,
+        conversationId: String(numericConversationId),
+        title: fullConversation?.title || nextTitle,
+        conversation: fullConversation,
+    };
+}
+
+app.get('/api/history', async (req, res) => {
     try {
         const history = await fetchConversationHistory(25);
         return res.json({ history });
@@ -184,7 +226,8 @@ app.get('/api/conversations', async (req, res) => {
 
 app.get('/api/conversations/:id', async (req, res) => {
     try {
-        const conversation = await getConversationDetails(req.params.id);
+        const { id } = req.params;
+        const conversation = await getConversationDetails(id);
 
         if (!conversation) {
             return res.status(404).json({ error: 'Conversation not found.' });
@@ -197,17 +240,47 @@ app.get('/api/conversations/:id', async (req, res) => {
     }
 });
 
-app.post('/api/chat', validateChatMessages, async (req, res) => {
+app.get('/api/debug/vex', (req, res) => {
+    const debugContext = createContextSnapshot({ project: 'VEX', task: 'Debug information', currentGoal: 'Inspect VEX personality state' });
+    const memoryPreview = getRelevantMemories('', debugContext).slice(0, 3);
+
+    res.json({
+        personalityVersion: VEX_PERSONALITY_VERSION,
+        behaviorMode: inferBehaviorMode('', debugContext),
+        activeProject: debugContext.project,
+        currentGoal: debugContext.currentGoal,
+        memoryCount: memoryPreview.length,
+        memoryPreview,
+    });
+});
+
+app.post('/api/chat', validateMessages, async (req, res) => {
     try {
-        const reply = await callOllama(req.body.messages);
-        return res.json({ reply });
+        const payload = await handleIncomingMessage(req.body?.conversationId, req.body.messages);
+        return res.json(payload);
     } catch (error) {
-        console.error('Ollama chat request failed:', error?.name || 'Error', error?.message || 'Unknown error');
+        if (error?.statusCode === 400) {
+            return res.status(400).json({ error: 'Invalid chat request.' });
+        }
+        console.error('Chat request failed:', error);
         return res.status(502).json({ error: "Vex couldn't reach the model." });
     }
 });
 
-app.get('/api/settings', async (_req, res) => {
+app.post('/api/conversations/:id/message', validateMessages, async (req, res) => {
+    try {
+        const payload = await handleIncomingMessage(req.params?.id, req.body.messages);
+        return res.json(payload);
+    } catch (error) {
+        console.error('Conversation message error:', error);
+        if (error?.statusCode === 400) {
+            return res.status(400).json({ error: 'Invalid chat request.' });
+        }
+        return res.status(502).json({ error: "Vex couldn't reach the model." });
+    }
+});
+
+app.get('/api/settings', async (req, res) => {
     try {
         const settings = await loadSettings();
         return res.json(settings);
@@ -226,7 +299,8 @@ app.post('/api/settings', async (req, res) => {
             return res.json({ success: true, settings: await loadSettings() });
         }
 
-        for (const [key, value] of Object.entries(body)) {
+        const entries = Object.entries(body).filter(([key]) => typeof key === 'string');
+        for (const [key, value] of entries) {
             await saveSetting(key, value);
         }
 
@@ -259,7 +333,13 @@ app.post('/api/reset', async (req, res) => {
 
 app.delete('/api/conversations/:id', async (req, res) => {
     try {
-        const conversationId = Number(req.params.id);
+        const { id } = req.params;
+
+        if (!id) {
+            return res.status(400).json({ error: 'Conversation ID is required.' });
+        }
+
+        const conversationId = Number(id);
         if (!Number.isFinite(conversationId) || conversationId <= 0) {
             return res.status(400).json({ error: 'Conversation ID is invalid.' });
         }
@@ -267,8 +347,8 @@ app.delete('/api/conversations/:id', async (req, res) => {
         await deleteConversation(conversationId);
         return res.json({ success: true, deleted: true, conversationId: String(conversationId) });
     } catch (error) {
-        console.error('Conversation delete failed:', error);
-        return res.status(500).json({ error: 'Unable to delete conversations.' });
+        console.error('Delete conversation failed:', error);
+        return res.status(500).json({ error: 'Unable to delete conversation.' });
     }
 });
 
@@ -298,27 +378,25 @@ app.delete('/api/conversations', async (req, res) => {
     }
 });
 
-app.use((error, _req, res, _next) => {
-    if (error?.type === 'entity.too.large' || error instanceof SyntaxError) {
-        return res.status(400).json({ error: 'Invalid request.' });
+app.use((error, req, res, next) => {
+    console.error('Request failed:', error);
+    if (error.type === 'entity.too.large' || error.type === 'entity.parse.failed') {
+        return res.status(error.type === 'entity.too.large' ? 413 : 400).json({ error: 'Invalid request.' });
     }
-
-    console.error('Request failed:', error?.name || 'Error', error?.message || 'Unknown error');
-    return res.status(500).json({ error: 'An internal error occurred.' });
+    return res.status(500).json({ error: 'Internal server error.' });
 });
 
-app.get('*', (_req, res) => {
+app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isMainModule) {
     app.listen(PORT, '0.0.0.0', () => {
-        console.log(`Vex server running on port ${PORT}`);
-        if (!process.env.VEX_PASSCODE) {
-            console.warn('VEX_PASSCODE is not configured; API requests will be rejected.');
-        }
-        if (!process.env.ALLOWED_ORIGIN) {
-            console.warn('ALLOWED_ORIGIN is not configured; browser API requests with an Origin header will be rejected.');
+        console.log(`Vex server running on http://localhost:${PORT}`);
+        if (!process.env.DATABASE_URL) {
+            console.warn('Warning: DATABASE_URL is not set. Add it to your .env file or Render environment variables before using Postgres-backed storage.');
         }
     });
 }

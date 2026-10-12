@@ -592,6 +592,17 @@ async function deleteSelectedConversations() {
     buildRecentList();
 }
 
+function createTextElement(tagName, className, text) {
+    const element = document.createElement(tagName);
+    if (className) {
+        element.className = className;
+    }
+    if (typeof text === 'string') {
+        element.textContent = text;
+    }
+    return element;
+}
+
 function openModal(title, content) {
     if (!modal || !modalBody || !modalTitle) {
         return;
@@ -634,18 +645,16 @@ function closeModal() {
 }
 
 function openHistorySearch() {
-    const content = document.createElement('div');
-    const searchInput = document.createElement('input');
+    const content = document.createDocumentFragment();
+    const searchInput = createTextElement('input', 'search-input');
     searchInput.id = 'historySearchInputModal';
-    searchInput.className = 'search-input';
     searchInput.type = 'text';
     searchInput.placeholder = 'Search saved history...';
     searchInput.setAttribute('aria-label', 'Search saved history');
-
-    const results = document.createElement('ul');
-    results.className = 'history-list';
+    const results = createTextElement('ul', 'history-list');
     results.id = 'historyResults';
     content.append(searchInput, results);
+
     openModal('History Search', content);
 
     const renderResults = (query = '') => {
@@ -658,21 +667,16 @@ function openHistorySearch() {
             : activeHistory;
 
         if (!filtered.length) {
-            const emptyResult = document.createElement('li');
-            emptyResult.className = 'action-item';
-            emptyResult.textContent = 'No matching conversation history found.';
-            results.replaceChildren(emptyResult);
+            results.replaceChildren(createTextElement('li', 'action-item', 'No matching conversation history found.'));
             return;
         }
 
         const resultItems = sortConversations(filtered).slice(0, 12).map((conversation) => {
             const preview = conversation.messages?.[0]?.content || conversation.title || 'Conversation';
             const item = document.createElement('li');
-            const button = document.createElement('button');
+            const button = createTextElement('button', 'history-item', String(preview).replace(/\s+/g, ' ').slice(0, 90));
             button.type = 'button';
-            button.className = 'history-item';
             button.dataset.conversationId = conversation.id;
-            button.textContent = String(preview).replace(/\s+/g, ' ').slice(0, 90);
             item.appendChild(button);
             return item;
         });
@@ -699,40 +703,31 @@ function openHistorySearch() {
 }
 
 function openSettingsPanel() {
-    const content = document.createElement('div');
-    const description = document.createElement('p');
-    description.className = 'info-block';
-    description.textContent = 'Adjust the local experience for VEX. These preferences stay in your browser.';
-
-    const settingsList = document.createElement('div');
-    settingsList.className = 'settings-list';
-    [
-        ['Compact mode', 'compact'],
-        ['Typing glow', 'glow'],
-        ['Auto-scroll to latest', 'autoscroll'],
-    ].forEach(([label, setting]) => {
-        const row = document.createElement('div');
-        row.className = 'settings-row';
-        const settingLabel = document.createElement('span');
-        settingLabel.textContent = label;
-        const toggle = document.createElement('button');
+    const content = document.createDocumentFragment();
+    content.appendChild(createTextElement('p', 'info-block', 'Adjust the local experience for VEX. These preferences stay in your browser.'));
+    const settingsList = createTextElement('div', 'settings-list');
+    for (const [setting, label] of [
+        ['compact', 'Compact mode'],
+        ['glow', 'Typing glow'],
+        ['autoscroll', 'Auto-scroll to latest'],
+    ]) {
+        const row = createTextElement('div', 'settings-row');
+        row.appendChild(createTextElement('span', '', label));
+        const toggle = createTextElement('button', 'toggle active');
         toggle.type = 'button';
-        toggle.className = 'toggle active';
         toggle.dataset.setting = setting;
         toggle.setAttribute('aria-label', `Toggle ${label.toLowerCase()}`);
-        row.append(settingLabel, toggle);
+        row.appendChild(toggle);
         settingsList.appendChild(row);
-    });
+    }
+    content.appendChild(settingsList);
 
-    const actions = document.createElement('div');
-    actions.className = 'modal-actions';
-    const doneButton = document.createElement('button');
-    doneButton.type = 'button';
-    doneButton.className = 'primary-action';
-    doneButton.id = 'dismissSettings';
-    doneButton.textContent = 'Done';
-    actions.appendChild(doneButton);
-    content.append(description, settingsList, actions);
+    const actions = createTextElement('div', 'modal-actions');
+    const dismissButton = createTextElement('button', 'primary-action', 'Done');
+    dismissButton.type = 'button';
+    dismissButton.id = 'dismissSettings';
+    actions.appendChild(dismissButton);
+    content.appendChild(actions);
 
     openModal('Settings', content);
 
@@ -749,27 +744,22 @@ function openSettingsPanel() {
 }
 
 function openProfileMenu() {
-    const content = document.createElement('div');
-    const profileName = document.createElement('p');
-    profileName.className = 'info-block';
-    profileName.textContent = 'Kiplangat Ezra';
-    const actions = document.createElement('ul');
-    actions.className = 'action-list';
-    [
-        ['View Profile', 'profile'],
-        ['Status: Online', 'status'],
-        ['Sign out', 'logout'],
-    ].forEach(([label, action]) => {
+    const content = document.createDocumentFragment();
+    content.appendChild(createTextElement('p', 'info-block', 'Kiplangat Ezra'));
+    const actions = createTextElement('ul', 'action-list');
+    for (const [action, label] of [
+        ['profile', 'View Profile'],
+        ['status', 'Status: Online'],
+        ['logout', 'Sign out'],
+    ]) {
         const item = document.createElement('li');
-        const button = document.createElement('button');
+        const button = createTextElement('button', 'action-item', label);
         button.type = 'button';
-        button.className = 'action-item';
         button.dataset.action = action;
-        button.textContent = label;
         item.appendChild(button);
         actions.appendChild(item);
-    });
-    content.append(profileName, actions);
+    }
+    content.appendChild(actions);
 
     openModal('Profile', content);
     modalBody.querySelectorAll('.action-item').forEach((button) => {
@@ -783,10 +773,7 @@ function openProfileMenu() {
 }
 
 function showPlaceholderModal(title, message) {
-    const content = document.createElement('p');
-    content.className = 'info-block';
-    content.textContent = message;
-    openModal(title, content);
+    openModal(title, createTextElement('p', 'info-block', message));
 }
 
 function persistConversationSet() {
@@ -794,48 +781,48 @@ function persistConversationSet() {
 }
 
 async function requestJson(endpoint, options = {}) {
-    let passcode = sessionStorage.getItem(PASSCODE_STORAGE_KEY);
-    if (!passcode) {
-        passcode = window.prompt('Enter your VEX passcode');
-        if (!passcode) {
-            throw new Error('A passcode is required to use VEX.');
+    const requestWithPasscode = (passcode) => {
+        const headers = new Headers(options.headers);
+        headers.set('X-Vex-Passcode', passcode);
+        return fetch(endpoint, { ...options, headers });
+    };
+    const promptForPasscode = () => {
+        const passcode = window.prompt('Enter the VEX passcode.');
+        if (passcode) {
+            sessionStorage.setItem(PASSCODE_STORAGE_KEY, passcode);
         }
-        sessionStorage.setItem(PASSCODE_STORAGE_KEY, passcode);
+        return passcode;
+    };
+
+    let passcode = sessionStorage.getItem(PASSCODE_STORAGE_KEY) || promptForPasscode();
+    if (!passcode) {
+        throw new Error('A VEX passcode is required.');
     }
 
-    const sendRequest = (value) => fetch(endpoint, {
-        ...options,
-        headers: {
-            ...options.headers,
-            'X-Vex-Passcode': value,
-        },
-    });
-
-    let response = await sendRequest(passcode);
+    let response = await requestWithPasscode(passcode);
     if (response.status === 401) {
         sessionStorage.removeItem(PASSCODE_STORAGE_KEY);
-        passcode = window.prompt('Incorrect passcode. Enter your VEX passcode again.');
+        passcode = promptForPasscode();
         if (!passcode) {
-            throw new Error('A valid passcode is required to use VEX.');
+            throw new Error('Unauthorized.');
         }
-        sessionStorage.setItem(PASSCODE_STORAGE_KEY, passcode);
-        response = await sendRequest(passcode);
+        response = await requestWithPasscode(passcode);
     }
 
     const contentType = response.headers.get('content-type') || '';
 
     if (!contentType.includes('application/json')) {
-        throw new Error('VEX returned an unexpected response. Please try again.');
+        const rawText = await response.text();
+        const preview = rawText.replace(/\s+/g, ' ').slice(0, 180);
+        throw new Error(
+            `${endpoint} returned a non-JSON response. Check that the VEX server is running on the correct port. Received: ${preview || 'empty response'}`
+        );
     }
 
     const payload = await response.json();
 
     if (!response.ok) {
-        if (response.status === 401) {
-            sessionStorage.removeItem(PASSCODE_STORAGE_KEY);
-            throw new Error('The passcode was not accepted.');
-        }
-        throw new Error(payload?.error || 'The request could not be completed.');
+        throw new Error(payload?.error || `Request failed (${response.status})`);
     }
 
     return payload;
@@ -952,26 +939,16 @@ async function sendMessage(messageText) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                messages: (activeConversation?.messages || [])
+                messages: (activeConversation?.messages || [{ role: 'user', content: messageText }])
                     .slice(-20)
-                    .map((message) => {
-                        const role = message.role === 'assistant' || message.role === 'model'
-                            ? 'assistant'
-                            : message.role === 'user'
-                                ? 'user'
-                                : null;
-                        return role && typeof message.content === 'string'
-                            ? { role, content: message.content.slice(0, 2000) }
-                            : null;
-                    })
-                    .filter(Boolean),
+                    .map((message) => ({
+                        role: message.role === 'assistant' ? 'assistant' : 'user',
+                        content: String(message.content || '').slice(0, 2000),
+                    })),
+                conversationId: activeConversationId,
             }),
             signal: requestController.signal,
         });
-
-        if (typeof payload.reply !== 'string') {
-            throw new Error('VEX returned an invalid model response.');
-        }
 
         const responseTimestamp = new Date().toISOString();
         addMessage('vex', payload.reply, responseTimestamp);
@@ -979,7 +956,13 @@ async function sendMessage(messageText) {
             speakResponse(payload.reply);
         }
 
-        if (activeConversation) {
+        if (payload.conversationId) {
+            activeConversationId = payload.conversationId;
+        }
+
+        if (payload.conversation) {
+            upsertConversationInHistory(payload.conversation);
+        } else if (activeConversation) {
             activeConversation.messages.push({
                 id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
                 role: 'assistant',
@@ -1181,11 +1164,9 @@ function bindActionButtons() {
     document.querySelectorAll('.quick-actions button').forEach((button) => {
         const label = button.dataset.quickAction || button.textContent.trim();
         const description = quickActionMap[label] || 'Start a fresh conversation with VEX.';
-        const labelElement = document.createElement('strong');
-        labelElement.textContent = label;
-        const descriptionElement = document.createElement('span');
-        descriptionElement.textContent = description;
-        button.replaceChildren(labelElement, descriptionElement);
+        const strong = createTextElement('strong', '', label);
+        const detail = createTextElement('span', '', description);
+        button.replaceChildren(strong, detail);
 
         button.addEventListener('click', () => {
             if (messageInput) {
