@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#061520" />
     <title>Vex</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+    <script src="/theme-init.js"></script>
     <link rel="stylesheet" href="/styles.css" />
 </head>
 
@@ -13,7 +15,9 @@
     <div class="app-shell">
         <aside class="sidebar" id="leftDrawer" aria-label="Main navigation">
             <div class="brand-block">
-                <div class="brand-mark">V</div>
+                <div class="brand-mark">
+                    <img src="/brand/vex-symbol.svg" alt="" aria-hidden="true" />
+                </div>
                 <div class="brand-copy">
                     <span class="brand-name">VEX</span>
                     <span class="mini-tag">Always here. Always thinking.</span>
@@ -21,23 +25,37 @@
             </div>
 
             <nav class="nav" aria-label="Sidebar navigation">
-                <button class="nav-item active" type="button" data-action="new-chat">
+                <button class="nav-item active" type="button" data-action="new-chat"
+                    aria-label="Chat" title="Chat">
                     <span class="nav-icon">💬</span>
                     <span>Chat</span>
                 </button>
-                <button class="nav-item" type="button" data-action="search-history">
+                <button class="nav-item" type="button" data-action="search-history"
+                    aria-label="Search conversations" title="Search conversations">
                     <span class="nav-icon">⌕</span>
                     <span>Search</span>
                 </button>
-                <button class="nav-item" type="button" data-action="open-files">
+                <button class="nav-item" type="button" data-action="open-files"
+                    aria-label="Files" title="Files">
                     <span class="nav-icon">▣</span>
                     <span>Files</span>
                 </button>
-                <button class="nav-item" type="button" data-action="settings">
+                <button class="nav-item" type="button" data-action="settings"
+                    aria-label="Settings" title="Settings">
                     <span class="nav-icon">⚙</span>
                     <span>Settings</span>
                 </button>
             </nav>
+
+            <section class="nav-theme-section" aria-labelledby="navThemeHeading">
+                <h2 class="nav-section-heading" id="navThemeHeading">Theme</h2>
+                <label class="sr-only" for="themePreference">Theme preference</label>
+                <select id="themePreference" class="nav-theme-select" aria-label="Theme preference">
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                </select>
+            </section>
 
             <button class="user-card" id="profileButton" type="button" aria-label="Open profile menu">
                 <span class="user-avatar">K</span>
@@ -51,24 +69,19 @@
 
         <main class="workspace">
             <header class="topbar">
-                <button id="openNavDrawer" class="mobile-panel-btn" type="button" aria-label="Open navigation menu"
-                    aria-controls="leftDrawer" aria-expanded="false" title="Open navigation">
+                <button id="openNavDrawer" class="mobile-panel-btn" type="button"
+                    aria-label="Collapse navigation" aria-controls="leftDrawer" aria-expanded="true"
+                    title="Collapse navigation">
                     <span aria-hidden="true">☰</span>
                 </button>
                 <div class="topbar-spacer" aria-hidden="true"></div>
-                <button id="openRecentDrawer" class="mobile-panel-btn" type="button" aria-label="Open recent chats"
-                    aria-controls="rightDrawer" aria-expanded="false" title="Open recent chats">
-                    <span aria-hidden="true">◷</span>
-                </button>
-                <div class="top-actions" aria-label="Top actions">
-                    <button id="resetButton" class="icon-btn reset-mini" type="button" aria-label="Reset conversation"
-                        title="Reset conversation">⟲</button>
-                </div>
             </header>
 
             <div class="hero-wrap">
                 <div id="emptyState" class="empty-state">
-                    <div class="hero-mark">V</div>
+                    <div class="hero-mark">
+                        <img src="/brand/vex-symbol.svg" alt="" aria-hidden="true" />
+                    </div>
                     <div class="hero-wordmark">VEX</div>
                     <h2>Welcome, <span id="welcomeDisplayName">Ezra</span>!</h2>
                     <p>How can I help you today?</p>
@@ -125,20 +138,26 @@
             <div class="history-shell">
                 <div class="history-header-row">
                     <h3>Chat history</h3>
-                    <button class="history-panel-button" type="button" aria-label="Open history actions">◫</button>
+                    <button id="toggleHistoryPanel" class="history-panel-button" type="button"
+                        aria-label="Collapse history panel" aria-controls="historyContent" aria-expanded="true"
+                        title="Collapse history panel">
+                        <span aria-hidden="true">›</span>
+                    </button>
                 </div>
 
-                <div class="history-search-wrap">
-                    <span class="history-search-icon" aria-hidden="true">⌕</span>
-                    <input id="historySearchInput" class="history-search-input" type="search" placeholder="Search..."
-                        aria-label="Search chats" />
-                </div>
+                <div id="historyContent" class="history-content">
+                    <div class="history-search-wrap">
+                        <span class="history-search-icon" aria-hidden="true">⌕</span>
+                        <input id="historySearchInput" class="history-search-input" type="search" placeholder="Search..."
+                            aria-label="Search chats" />
+                    </div>
 
-                <ul class="history-list" id="recentList" aria-live="polite"></ul>
+                    <ul class="history-list" id="recentList" aria-live="polite"></ul>
 
-                <div class="history-panel-actions">
-                    <button id="deleteSelectedButton" class="soft-action hidden" type="button">Delete selected</button>
-                    <button id="createNewChatButton" class="primary-action" type="button">Create new chat</button>
+                    <div class="history-panel-actions">
+                        <button id="deleteSelectedButton" class="soft-action hidden" type="button">Delete selected</button>
+                        <button id="createNewChatButton" class="primary-action" type="button">Create new chat</button>
+                    </div>
                 </div>
             </div>
         </aside>

@@ -4,7 +4,6 @@ const chatForm = document.getElementById('chatForm');
 const sendButton = document.getElementById('sendButton');
 const stopButton = document.getElementById('stopButton');
 const composerStatus = document.getElementById('composerStatus');
-const resetButton = document.getElementById('resetButton');
 const typingIndicator = document.getElementById('typingIndicator');
 const jumpButton = document.getElementById('jumpToLatest');
 const tagline = document.getElementById('tagline');
@@ -20,10 +19,18 @@ const welcomeDisplayName = document.getElementById('welcomeDisplayName');
 const voiceButton = document.getElementById('voiceButton');
 const drawerScrim = document.getElementById('drawerScrim');
 const openNavDrawerButton = document.getElementById('openNavDrawer');
-const openRecentDrawerButton = document.getElementById('openRecentDrawer');
+const toggleHistoryPanelButton = document.getElementById('toggleHistoryPanel');
+const appShell = document.querySelector('.app-shell');
+const themePreferenceSelect = document.getElementById('themePreference');
 
 const STORAGE_KEY = 'vex-conversations';
 const PASSCODE_STORAGE_KEY = 'vex-passcode';
+const THEME_STORAGE_KEY = 'vex-theme-preference';
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'vex-sidebar-collapsed';
+const HISTORY_COLLAPSED_STORAGE_KEY = 'vex-history-collapsed';
+const themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const mobileLayoutQuery = window.matchMedia('(max-width: 760px)');
+const tabletLayoutQuery = window.matchMedia('(max-width: 1100px)');
 let activeHistory = [];
 let selectedHistoryIds = new Set();
 let activeConversationId = null;
@@ -31,6 +38,9 @@ let isRequestPending = false;
 let requestController = null;
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
+let themePreference = getStoredThemePreference();
+let sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+let historyCollapsed = localStorage.getItem(HISTORY_COLLAPSED_STORAGE_KEY) === 'true';
 let voiceState = {
     supported: 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
     speechSupported: 'speechSynthesis' in window,
@@ -139,6 +149,59 @@ function syncDisplayNames() {
     }
 }
 
+function getStoredThemePreference() {
+    const preference = localStorage.getItem(THEME_STORAGE_KEY);
+    return ['system', 'light', 'dark'].includes(preference) ? preference : 'system';
+}
+
+function applyThemePreference(preference = themePreference) {
+    themePreference = ['system', 'light', 'dark'].includes(preference) ? preference : 'system';
+    localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+
+    const resolvedTheme = themePreference === 'system'
+        ? themeMediaQuery.matches ? 'dark' : 'light'
+        : themePreference;
+    document.documentElement.dataset.theme = themePreference;
+    document.documentElement.style.colorScheme = resolvedTheme;
+
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) {
+        themeColor.content = resolvedTheme === 'dark' ? '#0A141C' : '#F4F7FA';
+    }
+}
+
+function updateSidebarLayout() {
+    appShell?.classList.toggle('sidebar-collapsed', sidebarCollapsed && !mobileLayoutQuery.matches);
+    if (!openNavDrawerButton) {
+        return;
+    }
+
+    const mobileNavigationOpen = document.getElementById('leftDrawer')?.classList.contains('is-open') || false;
+    const navigationExpanded = mobileLayoutQuery.matches ? mobileNavigationOpen : !sidebarCollapsed;
+    const action = mobileLayoutQuery.matches
+        ? mobileNavigationOpen ? 'Close' : 'Open'
+        : navigationExpanded ? 'Collapse' : 'Expand';
+    openNavDrawerButton.setAttribute('aria-label', `${action} navigation`);
+    openNavDrawerButton.setAttribute('title', `${action} navigation`);
+    openNavDrawerButton.setAttribute('aria-expanded', String(navigationExpanded));
+}
+
+function updateHistoryPanelLayout() {
+    const historyPanel = document.getElementById('rightDrawer');
+    if (!historyPanel || !toggleHistoryPanelButton) {
+        return;
+    }
+
+    historyPanel.classList.toggle('collapsed', historyCollapsed && !tabletLayoutQuery.matches);
+    const tabletOpen = historyPanel.classList.contains('is-open');
+    const expanded = tabletLayoutQuery.matches ? tabletOpen : !historyCollapsed;
+    const action = tabletLayoutQuery.matches ? 'Close' : expanded ? 'Collapse' : 'Expand';
+    toggleHistoryPanelButton.setAttribute('aria-label', `${action} history panel`);
+    toggleHistoryPanelButton.setAttribute('title', `${action} history panel`);
+    toggleHistoryPanelButton.setAttribute('aria-expanded', String(expanded));
+    toggleHistoryPanelButton.querySelector('span').textContent = tabletLayoutQuery.matches ? '×' : expanded ? '›' : '‹';
+}
+
 function getRelativeTimeLabel(timestamp) {
     const date = new Date(timestamp || Date.now());
     const diffMs = Date.now() - date.getTime();
@@ -191,7 +254,7 @@ function isNearBottom() {
     }
 
     const distanceFromBottom = chatMessages.scrollHeight - (chatMessages.scrollTop + chatMessages.clientHeight);
-    return distanceFromBottom <= 160;
+    return distanceFromBottom <= 120;
 }
 
 function scrollToBottom() {
@@ -213,11 +276,249 @@ function updateJumpButtonState() {
     jumpButton.classList.toggle('hidden', !shouldShow);
 }
 
+function appendInlineMarkdown(parent, text) {
+    const pattern = /(\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)|`([^`]+)`|\*\*(.+?)\*\*|__(.+?)__|\*(.+?)\*|_(.+?)_)/g;
+    let cursor = 0;
+
+    for (const match of text.matchAll(pattern)) {
+        const index = match.index;
+        if (index > cursor) {
+            parent.appendChild(document.createTextNode(text.slice(cursor, index)));
+        }
+
+        if (match[2]) {
+            let url;
+            try {
+                url = new URL(match[3], window.location.href);
+            } catch {
+                parent.appendChild(document.createTextNode(match[0]));
+                cursor = index + match[0].length;
+                continue;
+            }
+
+            if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+                parent.appendChild(document.createTextNode(match[0]));
+                cursor = index + match[0].length;
+                continue;
+            }
+
+            const link = document.createElement('a');
+            link.href = url.href;
+            link.textContent = match[2];
+            link.title = match[4] || match[2];
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            parent.appendChild(link);
+        } else if (match[5]) {
+            const code = document.createElement('code');
+            code.textContent = match[5];
+            parent.appendChild(code);
+        } else {
+            const content = match[6] || match[7] || match[8] || match[9];
+            const emphasis = document.createElement(match[6] || match[7] ? 'strong' : 'em');
+            appendInlineMarkdown(emphasis, content);
+            parent.appendChild(emphasis);
+        }
+
+        cursor = index + match[0].length;
+    }
+
+    if (cursor < text.length) {
+        parent.appendChild(document.createTextNode(text.slice(cursor)));
+    }
+}
+
+function highlightCode(codeElement, language) {
+    const keywords = /\b(?:as|async|await|break|case|catch|class|const|continue|def|default|else|export|extends|false|finally|for|from|function|if|import|in|interface|let|new|null|of|return|static|throw|true|try|type|undefined|var|while|yield)\b/;
+    const tokenPattern = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\n]*|#[^\n]*|\b(?:as|async|await|break|case|catch|class|const|continue|def|default|else|export|extends|false|finally|for|from|function|if|import|in|interface|let|new|null|of|return|static|throw|true|try|type|undefined|var|while|yield)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\())/g;
+    const source = codeElement.textContent;
+    codeElement.replaceChildren();
+    let cursor = 0;
+
+    for (const match of source.matchAll(tokenPattern)) {
+        const index = match.index;
+        if (index > cursor) {
+            codeElement.appendChild(document.createTextNode(source.slice(cursor, index)));
+        }
+
+        const token = match[0];
+        const span = document.createElement('span');
+        span.className = token.startsWith('//') || token.startsWith('#')
+            ? 'token-comment'
+            : /^["'`]/.test(token)
+                ? 'token-string'
+                : /^\d/.test(token)
+                    ? 'token-number'
+                    : keywords.test(token)
+                        ? 'token-keyword'
+                        : 'token-function';
+        span.textContent = token;
+        codeElement.appendChild(span);
+        cursor = index + token.length;
+    }
+
+    if (cursor < source.length) {
+        codeElement.appendChild(document.createTextNode(source.slice(cursor)));
+    }
+}
+
+function createCodeBlock(source, language) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block';
+
+    const header = document.createElement('div');
+    header.className = 'code-block-header';
+    const languageLabel = document.createElement('span');
+    languageLabel.className = 'code-language';
+    languageLabel.textContent = language || 'Code';
+    const copyButton = document.createElement('button');
+    copyButton.className = 'copy-code-button';
+    copyButton.type = 'button';
+    copyButton.textContent = 'Copy';
+    copyButton.setAttribute('aria-label', `Copy ${language || 'code'} block`);
+    copyButton.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(source);
+            copyButton.textContent = 'Copied';
+        } catch (error) {
+            console.error('Unable to copy code block:', error);
+            copyButton.textContent = 'Copy failed';
+        }
+        window.setTimeout(() => {
+            copyButton.textContent = 'Copy';
+        }, 1600);
+    });
+
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    if (language) {
+        code.className = `language-${language.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+    }
+    code.textContent = source;
+    highlightCode(code, language);
+    pre.appendChild(code);
+    header.append(languageLabel, copyButton);
+    wrapper.append(header, pre);
+    return wrapper;
+}
+
+function appendMarkdown(parent, text) {
+    const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    let index = 0;
+
+    while (index < lines.length) {
+        const line = lines[index];
+        if (!line.trim()) {
+            index += 1;
+            continue;
+        }
+
+        const fence = line.match(/^\s*```([\w.+-]*)\s*$/);
+        if (fence) {
+            const codeLines = [];
+            index += 1;
+            while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+                codeLines.push(lines[index]);
+                index += 1;
+            }
+            if (index < lines.length) {
+                index += 1;
+            }
+            parent.appendChild(createCodeBlock(codeLines.join('\n'), fence[1]));
+            continue;
+        }
+
+        const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+        if (heading) {
+            const element = document.createElement(`h${heading[1].length}`);
+            appendInlineMarkdown(element, heading[2]);
+            parent.appendChild(element);
+            index += 1;
+            continue;
+        }
+
+        if (/^\s*>\s?/.test(line)) {
+            const quote = document.createElement('blockquote');
+            while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+                const paragraph = document.createElement('p');
+                appendInlineMarkdown(paragraph, lines[index].replace(/^\s*>\s?/, ''));
+                quote.appendChild(paragraph);
+                index += 1;
+            }
+            parent.appendChild(quote);
+            continue;
+        }
+
+        const listMatch = line.match(/^\s*(?:([-+*])|(\d+)\.)\s+(.+)$/);
+        if (listMatch) {
+            const ordered = Boolean(listMatch[2]);
+            const list = document.createElement(ordered ? 'ol' : 'ul');
+            while (index < lines.length) {
+                const itemMatch = lines[index].match(/^\s*(?:([-+*])|(\d+)\.)\s+(.+)$/);
+                if (!itemMatch || Boolean(itemMatch[2]) !== ordered) {
+                    break;
+                }
+                const item = document.createElement('li');
+                appendInlineMarkdown(item, itemMatch[3]);
+                list.appendChild(item);
+                index += 1;
+            }
+            parent.appendChild(list);
+            continue;
+        }
+
+        const paragraphLines = [];
+        while (index < lines.length && lines[index].trim()
+            && !/^\s*```/.test(lines[index])
+            && !/^#{1,6}\s/.test(lines[index])
+            && !/^\s*>\s?/.test(lines[index])
+            && !/^\s*(?:[-+*]|\d+\.)\s+/.test(lines[index])) {
+            paragraphLines.push(lines[index]);
+            index += 1;
+        }
+        const paragraph = document.createElement('p');
+        appendInlineMarkdown(paragraph, paragraphLines.join('\n'));
+        parent.appendChild(paragraph);
+    }
+}
+
+function appendMessageError(messageText, messageTextOverride) {
+    const row = document.createElement('div');
+    row.className = 'message-row vex message-error-row visible';
+    const group = document.createElement('div');
+    group.className = 'message-group';
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble message-error';
+    const message = document.createElement('p');
+    message.textContent = messageTextOverride || "VEX couldn't complete the request. Check your connection and try again.";
+    const actions = document.createElement('div');
+    actions.className = 'message-error-actions';
+    const retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.className = 'message-action-button';
+    retryButton.textContent = 'Retry';
+    retryButton.addEventListener('click', () => {
+        row.remove();
+        sendMessage(messageText, true);
+    });
+    const dismissButton = document.createElement('button');
+    dismissButton.type = 'button';
+    dismissButton.className = 'message-action-button subtle';
+    dismissButton.textContent = 'Dismiss';
+    dismissButton.addEventListener('click', () => row.remove());
+    actions.append(retryButton, dismissButton);
+    bubble.append(message, actions);
+    group.appendChild(bubble);
+    row.appendChild(group);
+    chatMessages?.appendChild(row);
+}
+
 function addMessage(role, text, timestamp = new Date().toISOString()) {
     if (!chatMessages || !text) {
         return;
     }
 
+    const shouldAutoScroll = isNearBottom();
     setEmptyStateVisible(false);
 
     const row = document.createElement('div');
@@ -232,7 +533,12 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-    bubble.textContent = text;
+    if (role === 'user') {
+        bubble.textContent = text;
+    } else {
+        bubble.classList.add('markdown-body');
+        appendMarkdown(bubble, text);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'message-meta';
@@ -246,7 +552,7 @@ function addMessage(role, text, timestamp = new Date().toISOString()) {
 
     requestAnimationFrame(() => {
         row.classList.add('visible');
-        if (isNearBottom()) {
+        if (shouldAutoScroll) {
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
         updateJumpButtonState();
@@ -465,30 +771,22 @@ function buildRecentList() {
         const item = document.createElement('li');
         item.className = 'history-item-row';
 
-        const checkboxWrap = document.createElement('label');
-        checkboxWrap.className = 'history-checkbox';
-        checkboxWrap.setAttribute('aria-label', `Select ${conversation.title || 'conversation'}`);
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = selectedHistoryIds.has(conversation.id);
-        checkbox.addEventListener('change', (event) => {
-            if (event.target.checked) {
-                selectedHistoryIds.add(conversation.id);
-            } else {
-                selectedHistoryIds.delete(conversation.id);
-            }
-            updateDeleteSelectionState();
-        });
-
-        checkboxWrap.appendChild(checkbox);
-
         const threadButton = document.createElement('button');
         threadButton.type = 'button';
         threadButton.className = 'history-row';
         threadButton.dataset.conversationId = conversation.id;
         threadButton.classList.toggle('active', conversation.id === activeConversationId);
-        threadButton.setAttribute('aria-label', `Open conversation ${conversation.title || 'untitled'}`);
+        threadButton.classList.toggle('selected', selectedHistoryIds.has(conversation.id));
+        threadButton.setAttribute('aria-pressed', String(selectedHistoryIds.has(conversation.id)));
+        threadButton.setAttribute('aria-label', `Open and select conversation ${conversation.title || 'untitled'}`);
+        threadButton.addEventListener('click', () => {
+            if (selectedHistoryIds.has(conversation.id)) {
+                selectedHistoryIds.delete(conversation.id);
+            } else {
+                selectedHistoryIds.add(conversation.id);
+            }
+            selectConversation(conversation.id, true);
+        });
 
         const icon = document.createElement('span');
         icon.className = 'history-avatar';
@@ -511,16 +809,15 @@ function buildRecentList() {
 
         meta.append(title, preview);
         threadButton.append(icon, meta, time);
-        threadButton.addEventListener('click', () => selectConversation(conversation.id));
 
-        item.append(checkboxWrap, threadButton);
+        item.appendChild(threadButton);
         recentList.appendChild(item);
     });
 
     updateDeleteSelectionState();
 }
 
-function selectConversation(conversationId) {
+function selectConversation(conversationId, keepHistoryOpen = false) {
     const conversation = activeHistory.find((entry) => entry.id === conversationId);
     if (!conversation) {
         return;
@@ -530,7 +827,13 @@ function selectConversation(conversationId) {
     renderHistory(conversation.messages || []);
     setEmptyStateVisible(!conversation.messages?.length);
     buildRecentList();
-    closeDrawers();
+    if (keepHistoryOpen) {
+        [...(recentList?.querySelectorAll('.history-row') || [])]
+            .find((row) => row.dataset.conversationId === conversationId)
+            ?.focus();
+    } else {
+        closeDrawers();
+    }
 }
 
 function createNewConversationSession() {
@@ -632,7 +935,7 @@ function closeModal() {
     if (focusTarget instanceof HTMLElement) {
         const sourceDrawer = focusTarget.closest('.sidebar, .right-rail');
         if (sourceDrawer && getComputedStyle(sourceDrawer).display === 'none') {
-            focusTarget = sourceDrawer.id === 'leftDrawer' ? openNavDrawerButton : openRecentDrawerButton;
+            focusTarget = sourceDrawer.id === 'leftDrawer' ? openNavDrawerButton : messageInput;
         }
     }
 
@@ -705,6 +1008,7 @@ function openHistorySearch() {
 function openSettingsPanel() {
     const content = document.createDocumentFragment();
     content.appendChild(createTextElement('p', 'info-block', 'Adjust the local experience for VEX. These preferences stay in your browser.'));
+
     const settingsList = createTextElement('div', 'settings-list');
     for (const [setting, label] of [
         ['compact', 'Compact mode'],
@@ -839,8 +1143,8 @@ function openDrawer(panelId, trigger) {
     panel.classList.add('is-open');
     document.querySelector('.app-shell')?.classList.add('drawer-open');
     drawerScrim.classList.remove('hidden');
-    openNavDrawerButton?.setAttribute('aria-expanded', String(trigger === openNavDrawerButton));
-    openRecentDrawerButton?.setAttribute('aria-expanded', String(trigger === openRecentDrawerButton));
+    updateSidebarLayout();
+    updateHistoryPanelLayout();
     panel.querySelector('button')?.focus();
 }
 
@@ -848,8 +1152,8 @@ function closeDrawers(restoreFocus = true) {
     document.querySelectorAll('.sidebar, .right-rail').forEach((drawer) => drawer.classList.remove('is-open'));
     document.querySelector('.app-shell')?.classList.remove('drawer-open');
     drawerScrim?.classList.add('hidden');
-    openNavDrawerButton?.setAttribute('aria-expanded', 'false');
-    openRecentDrawerButton?.setAttribute('aria-expanded', 'false');
+    updateSidebarLayout();
+    updateHistoryPanelLayout();
     if (restoreFocus && (!modal || modal.classList.contains('hidden')) && drawerReturnFocus instanceof HTMLElement && drawerReturnFocus.isConnected) {
         drawerReturnFocus.focus();
     }
@@ -897,7 +1201,7 @@ async function loadHistory() {
     }
 }
 
-async function sendMessage(messageText) {
+async function sendMessage(messageText, isRetry = false) {
     if (!messageText || isRequestPending) {
         return;
     }
@@ -911,7 +1215,7 @@ async function sendMessage(messageText) {
     const activeConversation = getActiveConversation();
     const now = new Date().toISOString();
 
-    if (activeConversation) {
+    if (activeConversation && !isRetry) {
         activeConversation.messages.push({
             id: `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
             role: 'user',
@@ -928,9 +1232,11 @@ async function sendMessage(messageText) {
     requestController = new AbortController();
     setTypingState(true);
 
-    addMessage('user', messageText, now);
-    messageInput.value = '';
-    autoResizeTextarea();
+    if (!isRetry) {
+        addMessage('user', messageText, now);
+        messageInput.value = '';
+        autoResizeTextarea();
+    }
 
     try {
         const payload = await requestJson('/api/chat', {
@@ -978,8 +1284,9 @@ async function sendMessage(messageText) {
         if (error.name === 'AbortError') {
             wasStopped = true;
         } else {
-            addMessage('vex', error.message || 'Something went wrong.', new Date().toISOString());
+            console.error('Chat request failed:', error);
         }
+        appendMessageError(messageText, wasStopped ? 'Generation was stopped.' : undefined);
     } finally {
         isRequestPending = false;
         requestController = null;
@@ -1053,11 +1360,11 @@ function bindActionButtons() {
             const actions = {
                 'new-chat': createNewConversationSession,
                 'search-history': () => {
+                    openDrawer('rightDrawer');
                     if (historySearchInput) {
                         historySearchInput.focus();
                         historySearchInput.select();
                     }
-                    openDrawer('rightDrawer', openRecentDrawerButton);
                 },
                 'open-files': () => filePicker?.click(),
                 tasks: () => showPlaceholderModal('Tasks', 'Task tracking is not part of this build yet. VEX can manage notes and planning once this interface is connected to a real task backend.'),
@@ -1067,8 +1374,10 @@ function bindActionButtons() {
 
             if (actions[action]) {
                 actions[action]();
-                closeDrawers(false);
-                messageInput?.focus();
+                if (action !== 'search-history') {
+                    closeDrawers(false);
+                    messageInput?.focus();
+                }
             }
         });
     });
@@ -1220,8 +1529,30 @@ function bindActionButtons() {
         closeModalButton.addEventListener('click', closeModal);
     }
 
-    openNavDrawerButton?.addEventListener('click', () => openDrawer('leftDrawer', openNavDrawerButton));
-    openRecentDrawerButton?.addEventListener('click', () => openDrawer('rightDrawer', openRecentDrawerButton));
+    openNavDrawerButton?.addEventListener('click', () => {
+        if (mobileLayoutQuery.matches) {
+            if (document.getElementById('leftDrawer')?.classList.contains('is-open')) {
+                closeDrawers();
+            } else {
+                openDrawer('leftDrawer', openNavDrawerButton);
+            }
+            return;
+        }
+
+        sidebarCollapsed = !sidebarCollapsed;
+        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsed));
+        updateSidebarLayout();
+    });
+    toggleHistoryPanelButton?.addEventListener('click', () => {
+        if (tabletLayoutQuery.matches) {
+            closeDrawers();
+            return;
+        }
+
+        historyCollapsed = !historyCollapsed;
+        localStorage.setItem(HISTORY_COLLAPSED_STORAGE_KEY, String(historyCollapsed));
+        updateHistoryPanelLayout();
+    });
     drawerScrim?.addEventListener('click', closeDrawers);
 
     if (filePicker) {
@@ -1322,10 +1653,6 @@ if (stopButton) {
     stopButton.addEventListener('click', stopGeneration);
 }
 
-if (resetButton) {
-    resetButton.addEventListener('click', resetConversation);
-}
-
 if (chatMessages) {
     chatMessages.addEventListener('scroll', updateJumpButtonState);
 }
@@ -1381,6 +1708,22 @@ document.addEventListener('keydown', (event) => {
 });
 
 syncDisplayNames();
+applyThemePreference();
+updateSidebarLayout();
+updateHistoryPanelLayout();
+mobileLayoutQuery.addEventListener('change', updateSidebarLayout);
+tabletLayoutQuery.addEventListener('change', updateHistoryPanelLayout);
+if (themePreferenceSelect) {
+    themePreferenceSelect.value = themePreference;
+    themePreferenceSelect.addEventListener('change', () => {
+        applyThemePreference(themePreferenceSelect.value);
+    });
+}
+themeMediaQuery.addEventListener('change', () => {
+    if (themePreference === 'system') {
+        applyThemePreference('system');
+    }
+});
 setRandomTagline();
 updateVoiceButtonState();
 bindActionButtons();
